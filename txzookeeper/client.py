@@ -274,11 +274,11 @@ class ZookeeperClient(object):
         self._check_connected()
         d = defer.Deferred()
 
-        def _cb_get_children(result_code, *args):
+        def _cb_get_children(result_code, status, children):
             error = self._check_result(result_code, True)
             if error:
                 return d.errback(error)
-            d.callback(args)
+            d.callback(children)
 
         def _zk_cb_get_children(result_code, *args):
             reactor.callFromThread(_cb_get_children, result_code, *args)
@@ -291,9 +291,38 @@ class ZookeeperClient(object):
 
     def get_acl(self, path, acls):
         self._check_connected()
+        d = defer.Deferred()
 
-    def set_acl(self, path, acls):
+        def _cb_get_acl(result_code, acls):
+            error = self._check_result(result_code, True)
+            if error:
+                return d.errback(error)
+            d.callback(acls)
+
+        def _zk_cb_get_children(result_code, acls):
+            reactor.callFromThread(_cb_get_acl, result_code, acls)
+
+        result = zookeeper.aget_acl(self.handle, path)
+        self._check_result(result)
+        return d
+
+    def set_acl(self, path, acls, version=-1):
         self._check_connected()
+        d = defer.Deferred()
+
+        def _cb_set_acl(result_code, *args):
+            error = self._check_result(result_code, True)
+            if error:
+                return d.errback(error)
+            d.callback(args)
+
+        def _zk_cb_get_children(result_code, *args):
+            reactor.callFromThread(_cb_set_acl, result_code, *args)
+
+        result = zookeeper.aset_acl(
+            self.handle, path, version, acls, _zk_cb_get_children)
+        self._check_result(result)
+        return d
 
     def set(self, path, data="", version=-1):
         """

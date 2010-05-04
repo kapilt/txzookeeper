@@ -2,7 +2,10 @@ import zookeeper
 
 from twisted.internet.defer import Deferred
 from txzookeeper.tests import ZookeeperTestCase
-from txzookeeper.client import ZookeeperClient
+from txzookeeper.client import (
+    ZookeeperClient, ZOO_OPEN_ACL_UNSAFE)
+
+PUBLIC_ACL = ZOO_OPEN_ACL_UNSAFE
 
 
 class ClientTests(ZookeeperTestCase):
@@ -406,6 +409,84 @@ class ClientTests(ZookeeperTestCase):
         d.addCallback(set_node)
         d.addCallback(verify_fails)
         d.addErrback(verify_succeeds)
+        return d
+
+    def test_get_children(self):
+
+        d = self.client.connect()
+
+        def create_nodes(client):
+            zookeeper.create(
+                self.client.handle, "/tower", "", [PUBLIC_ACL], 0)
+            zookeeper.create(
+                self.client.handle, "/tower/london", "", [PUBLIC_ACL], 0)
+            zookeeper.create(
+                self.client.handle, "/tower/paris", "", [PUBLIC_ACL], 0)
+
+            return client
+
+        def get_children(client):
+            return client.get_children("/tower")
+
+        def verify_children(children):
+            self.assertEqual(children, ["paris", "london"])
+
+        d.addCallback(create_nodes)
+        d.addCallback(get_children)
+        d.addCallback(verify_children)
+        return d
+
+    def test_get_children_with_watch(self):
+        """
+        The get_children method optionally takes a watcher callable which will
+        be notified when the node is modified, or a child deleted or added.
+        """
+
+    def test_get_no_children(self):
+        """
+        Getting children of a node without any children returns an empty list.
+        """
+        d = self.client.connect()
+
+        def create_node(client):
+            return self.client.create("/tower")
+
+        def get_children(path):
+            return self.client.get_children(path)
+
+        def verify_children(children):
+            self.assertEqual(children, [])
+
+        d.addCallback(create_node)
+        d.addCallback(get_children)
+        d.addCallback(verify_children)
+        return d
+
+    def test_get_children_nonexistant(self):
+        """
+        Getting children of a nonexistant node also returns an empty list
+        """
+        d = self.client.connect()
+
+        def get_children(client):
+            return client.get_children("/tower")
+
+        def verify_children(children):
+            self.assertEqual(children, [])
+
+        d.addCallback(get_children)
+        d.addCallback(verify_children)
+        return d
+
+    def test_invalid_watcher(self):
+        """
+        Setting an invalid watcher raises a syntaxerror.
+        """
+
+    def test_authenticate(self):
+        """
+        The connection can be authenticated.
+        """
 
     def test_sync(self):
         """
@@ -417,7 +498,45 @@ class ClientTests(ZookeeperTestCase):
         The client can be used to set an ACL on a node.
         """
 
+        d = self.client.connect()
+
+        acl = [PUBLIC_ACL,
+               dict(scheme="digest",
+                    id="zebra:moon",
+                    perms=zookeeper.PERM_ALL)]
+
+        def create_node(client):
+            return client.create("/moose")
+
+        def set_acl(path):
+            return self.client.set_acl(path, acl)
+
+        def verify_acl(junk):
+            self.assertEqual(
+                zookeeper.get_acl(self.client.handle, "/moose")[1],
+                acl)
+
+        d.addCallback(create_node)
+        d.addCallback(set_acl)
+        d.addCallback(verify_acl)
+        return d
+
     def test_get_acl(self):
         """
         The client can be used to get an ACL on a node.
         """
+
+        d = self.client.connect()
+
+        def create_node(client):
+            return client.create("/moose")
+
+        def get_acl(path):
+            return self.client.get_acl(path)
+
+        def verify_acl(acls):
+            self.assertEqual(acls, [PUBLIC_ACL])
+
+        d.addCallback(create_node)
+
+        return d
