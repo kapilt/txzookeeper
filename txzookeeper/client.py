@@ -1,6 +1,7 @@
 import zookeeper
 import sys
 import thread
+import time
 
 from twisted.internet import defer, reactor, task
 
@@ -44,7 +45,6 @@ class ZookeeperClient(object):
         self.servers = servers
         self.connected = False
         self.handle = None
-        self._async_calls = [] # outstanding async calls
 
     def _check_connected(self):
         if not self.connected:
@@ -117,19 +117,12 @@ class ZookeeperClient(object):
         """
         if not self.connected:
             return
-        if self._async_calls:
-            if force:
-                raise zookeeper.ClosingException(
-                    "Error on close, outstanding async calls")
-            print "reschedule close"
 
-            return task.deferLater(reactor, 0.1, self.close)
-        self.connected = False
+        time.sleep(0.1)
         result = zookeeper.close(self.handle)
-        error = self._check_result(result, callback=True)
-        if error:
-            return defer.fail(error)
-        return defer.succeed(result)
+        self.connected = False
+        self._check_result(result)
+        return result
 
     def connect(self, timeout=10):
         """
@@ -150,15 +143,12 @@ class ZookeeperClient(object):
                 d.errback(value)
 
         def _zk_cb_connected(handle, type, state, path):
-            self._async_calls.remove(_zk_cb_connected)
             print "tx - zk callback invoked connected"
             reactor.callFromThread(_cb_connected, handle, type, state, path)
 
         # use a scheduled function to ensure a timeout
         def _check_timeout():
             d.errback()
-
-        self._async_calls.append(_zk_cb_connected)
 
         self.handle = zookeeper.init(
             self.servers, _zk_cb_connected, DEFAULT_TIMEOUT)
@@ -186,10 +176,8 @@ class ZookeeperClient(object):
 
         def _zk_cb_created(handle, result_code, path):
             reactor.callFromThread(_cb_created, result_code, path)
-            self._async_calls.remove(_zk_cb_created)
             print "tx - callback finished created"
 
-        self._async_calls.append(_zk_cb_created)
         result = zookeeper.acreate(
             self.handle, path, data, acls, flags, _zk_cb_created)
         self._check_result(result)
@@ -209,9 +197,7 @@ class ZookeeperClient(object):
         def _zk_cb_delete(handle, result_code):
             reactor.callFromThread(_cb_delete, result_code)
             print "tx - callback finished delete"
-            self._async_calls.remove(_zk_cb_delete)
 
-        self._async_calls.append(_zk_cb_delete)
         result = zookeeper.adelete(self.handle, path, version, _zk_cb_delete)
         self._check_result(result)
         return d
@@ -230,9 +216,7 @@ class ZookeeperClient(object):
         def _zk_cb_exists(handle, result_code, stat):
             reactor.callFromThread(_cb_exists, result_code, stat)
             print "tx - zk callback finished exists"
-            self._async_calls.remove(_zk_cb_exists)
 
-        self._async_calls.append(_zk_cb_exists)
         result = zookeeper.aexists(self.handle, path, watcher, _zk_cb_exists)
         self._check_result(result)
         return d
@@ -251,9 +235,7 @@ class ZookeeperClient(object):
         def _zk_cb_get(handle, result_code, value, stat):
             reactor.callFromThread(_cb_get, result_code, value, stat)
             print "tx - zk callback finished get"
-            self._async_calls.remove(_zk_cb_get)
 
-        self._async_calls.append(_zk_cb_get)
         result = zookeeper.aget(self.handle, path, watcher, _zk_cb_get)
         self._check_result(result)
         return d
@@ -287,9 +269,7 @@ class ZookeeperClient(object):
         def _zk_cb_set(handle, result_code):
             reactor.callFromThread(_cb_set, result_code)
             print "tx - zk callback finished set"
-            self._async_calls.remove(_cb_set)
 
-        self._async_calls.append(_zk_cb_set)
         result = zookeeper.aset(self.handle, path, data, version, _zk_cb_set)
         self._check_result(result)
         return d
@@ -322,7 +302,6 @@ class ZookeeperClient(object):
             reactor.callFromThread(_cb_sync, result_code)
             print "tx - zk callback finished sync"
 
-        self._async_calls.append(_zk_cb_sync)
         result = zookeeper.async(path, _zk_cb_sync)
         self._check_result(result)
         return d
