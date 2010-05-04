@@ -68,6 +68,16 @@ class ZookeeperClient(object):
             return callback
         return None
 
+    def _wrap_watcher(self, watcher):
+        if watcher is None:
+            return watcher
+        if not callable(watcher):
+            raise SyntaxError("Invalid Watcher")
+
+        def wrapper(handle, type, state, path):
+            reactor.callFromThread(watcher, type, path)
+        return wrapper
+
     @property
     def recv_timeout(self):
         """
@@ -142,7 +152,6 @@ class ZookeeperClient(object):
 
         def _cb_connected(handle, type, state, path):
             value = Connected(handle, type, state, path)
-            print "tx - twised callback invoked connected"
             if state == zookeeper.CONNECTED_STATE:
                 self.connected = True
                 d.callback(self)
@@ -150,7 +159,6 @@ class ZookeeperClient(object):
                 d.errback(value)
 
         def _zk_cb_connected(handle, type, state, path):
-            print "tx - zk callback invoked connected"
             reactor.callFromThread(_cb_connected, handle, type, state, path)
 
         # use a scheduled function to ensure a timeout
@@ -178,7 +186,6 @@ class ZookeeperClient(object):
         d = defer.Deferred()
 
         def _cb_created(result_code, path):
-            print "tx - twisted callback invoked created"
             error = self._check_result(result_code, True)
             if error:
                 return d.errback(error)
@@ -186,7 +193,6 @@ class ZookeeperClient(object):
 
         def _zk_cb_created(handle, result_code, path):
             reactor.callFromThread(_cb_created, result_code, path)
-            print "tx - callback finished created"
 
         result = zookeeper.acreate(
             self.handle, path, data, acls, flags, _zk_cb_created)
@@ -207,7 +213,6 @@ class ZookeeperClient(object):
         d = defer.Deferred()
 
         def _cb_delete(result_code):
-            print "tx - twisted callback invoked delete"
             error = self._check_result(result_code, True)
             if error:
                 return d.errback(error)
@@ -215,18 +220,24 @@ class ZookeeperClient(object):
 
         def _zk_cb_delete(handle, result_code):
             reactor.callFromThread(_cb_delete, result_code)
-            print "tx - callback finished delete"
 
         result = zookeeper.adelete(self.handle, path, version, _zk_cb_delete)
         self._check_result(result)
         return d
 
     def exists(self, path, watcher=None):
+        """
+        Check that the given node path exists. Returns a deferred, the deferred
+        value If it does exist is the node stat information (created, modified,
+        version, etc.). If it doesn't exist the deferred value is None.
+
+        An optional watcher callable may be passed that will be called back
+        when the node is modified or removed.
+        """
         self._check_connected()
         d = defer.Deferred()
 
         def _cb_exists(result_code, stat):
-            print "tx - twisted callback invoked exists"
             error = self._check_result(result_code, True)
             if error:
                 return d.errback(error)
@@ -234,18 +245,25 @@ class ZookeeperClient(object):
 
         def _zk_cb_exists(handle, result_code, stat):
             reactor.callFromThread(_cb_exists, result_code, stat)
-            print "tx - zk callback finished exists"
 
+        watcher = self._wrap_watcher(watcher)
         result = zookeeper.aexists(self.handle, path, watcher, _zk_cb_exists)
         self._check_result(result)
         return d
 
     def get(self, path, watcher=None):
+        """
+        Get the node's data for the given node path. Returns a deferred. The
+        deferred value is the content of the Node.
+
+        An optional watcher callable may be passed that will be called back
+        when the node is modified or removed.
+        """
+
         self._check_connected()
         d = defer.Deferred()
 
         def _cb_get(result_code, value, stat):
-            print "tx - twisted callback invoked get"
             error = self._check_result(result_code, True)
             if error:
                 return d.errback(error)
@@ -253,20 +271,20 @@ class ZookeeperClient(object):
 
         def _zk_cb_get(handle, result_code, value, stat):
             reactor.callFromThread(_cb_get, result_code, value, stat)
-            print "tx - zk callback finished get"
 
+        watcher = self._wrap_watcher(watcher)
         result = zookeeper.aget(self.handle, path, watcher, _zk_cb_get)
         self._check_result(result)
         return d
 
     def get_children(self, path):
-        pass
+        self._check_connected()
 
     def get_acl(self, path, acls):
-        pass
+        self._check_connected()
 
     def set_acl(self, path, acls):
-        pass
+        self._check_connected()
 
     def set(self, path, data="", version=-1):
         """
@@ -279,7 +297,6 @@ class ZookeeperClient(object):
         d = defer.Deferred()
 
         def _cb_set(result_code):
-            print "tx - twisted callback invoked set"
             error = self._check_result(result_code, True)
             if error:
                 return d.errback(error)
@@ -287,7 +304,6 @@ class ZookeeperClient(object):
 
         def _zk_cb_set(handle, result_code):
             reactor.callFromThread(_cb_set, result_code)
-            print "tx - zk callback finished set"
 
         result = zookeeper.aset(self.handle, path, data, version, _zk_cb_set)
         self._check_result(result)
@@ -311,7 +327,6 @@ class ZookeeperClient(object):
         d = defer.Deferred()
 
         def _cb_sync(result_code):
-            print "tx - twisted callback invoked sync"
             error = self._check_result(result_code, True)
             if error:
                 return d.errback(error)
@@ -319,7 +334,6 @@ class ZookeeperClient(object):
 
         def _zk_cb_sync(handle, result_code):
             reactor.callFromThread(_cb_sync, result_code)
-            print "tx - zk callback finished sync"
 
         result = zookeeper.async(path, _zk_cb_sync)
         self._check_result(result)

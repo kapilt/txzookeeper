@@ -1,6 +1,7 @@
 import time
 import zookeeper
 
+from twisted.internet.defer import Deferred
 from txzookeeper.tests import ZookeeperTestCase
 from txzookeeper.client import ZookeeperClient
 
@@ -147,6 +148,95 @@ class ClientTests(ZookeeperTestCase):
         """
         The client can retrieve a node's data via its get method.
         """
+        d = self.client.connect()
+
+        def create_node(client):
+            d = self.client.create(
+                "/foobar-transient", "rabbit", flags=zookeeper.EPHEMERAL)
+            return d
+
+        def get_contents(path):
+            return self.client.get(path)
+
+        def verify_contents(data):
+            self.assertEqual(data, "rabbit")
+
+        d.addCallback(create_node)
+        d.addCallback(get_contents)
+        d.addCallback(verify_contents)
+
+    def xtest_get_with_watcher_same_session(self):
+        """
+        The client can specify a callable watcher when invoking get. If the
+        watcher is created from the same session that created the node, it
+        will not be notified.
+
+        The
+        watcher will be called back when the client path is modified
+        """
+        d = self.client.connect()
+        values = []
+
+        def node_watch(*args, **kw):
+            values.append(True)
+
+        def create_node(client):
+            return self.client.create("/foobar-watched", "rabbit")
+
+        def get_node(path):
+            return self.client.get(path, node_watch)
+
+        def trigger_watch(data):
+            zookeeper.delete(self.client.handle, "/foobar-watched")
+            return data
+
+        def verify_watch(*args):
+            self.assertTrue(values)
+
+        d.addCallback(create_node)
+        d.addCallback(get_node)
+        d.addCallback(trigger_watch)
+        d.addCallback(verify_watch)
+
+        return d
+
+    def test_get_with_watcher(self):
+        """
+        The client can specify a callable watcher when invoking get. The
+        watcher will be called back when the client path is modified in
+        another session.
+        """
+        d = self.client.connect()
+        watch_deferred = Deferred()
+
+        def node_watch(type, path):
+            watch_deferred.callback((type, path))
+
+        def create_node(client):
+            return self.client.create("/foobar-watched", "rabbit")
+
+        def get_node(path):
+            return self.client.get(path, node_watch)
+
+        def new_connection(data):
+            self.client2 = ZookeeperClient("127.0.0.1:2181")
+            return self.client2.connect()
+
+        def trigger_watch(client):
+            zookeeper.set(self.client2.handle, "/foobar-watched", "abc")
+            return watch_deferred
+
+        def verify_watch((event_type, path)):
+            self.assertEqual(path, "/foobar-watched")
+            self.assertEqual(event_type, zookeeper.CHANGED_EVENT)
+
+        d.addCallback(create_node)
+        d.addCallback(get_node)
+        d.addCallback(new_connection)
+        d.addCallback(trigger_watch)
+        d.addCallback(verify_watch)
+
+        return d
 
     def test_delete(self):
         """
@@ -179,12 +269,15 @@ class ClientTests(ZookeeperTestCase):
         d.addCallback(delete_node)
         d.addCallback(verify_not_exists)
 
-    def xtest_create_sequence_node(self):
+    def test_exists_with_watcher(self):
+        pass
+
+    def test_create_sequence_node(self):
         """
         The client can create a sequence node that
         """
 
-    def xtest_create_duplicate_node(self):
+    def test_create_duplicate_node(self):
         """
         Attempting to create a node that already exists results in
         a failure.
