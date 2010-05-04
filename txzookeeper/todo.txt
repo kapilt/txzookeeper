@@ -1,0 +1,14 @@
+
+
+figure out watchers
+
+zookeeper connection timeout
+
+acls
+
+proper exception mapping
+
+
+
+
+
