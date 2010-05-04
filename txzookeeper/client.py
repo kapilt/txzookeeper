@@ -233,6 +233,7 @@ class ZookeeperClient(object):
             reactor.callFromThread(_cb_exists, result_code, stat)
 
         watcher = self._wrap_watcher(watcher)
+
         result = zookeeper.aexists(self.handle, path, watcher, _zk_cb_exists)
         self._check_result(result)
         return d
@@ -263,8 +264,30 @@ class ZookeeperClient(object):
         self._check_result(result)
         return d
 
-    def get_children(self, path):
+    def get_children(self, path, watcher=None):
+        """
+        Get the ids of all children directly under the given path.
+
+        Optionally a watcher (callable) may be set on this path to be notified
+        of changes.
+        """
         self._check_connected()
+        d = defer.Deferred()
+
+        def _cb_get_children(result_code, *args):
+            error = self._check_result(result_code, True)
+            if error:
+                return d.errback(error)
+            d.callback(args)
+
+        def _zk_cb_get_children(result_code, *args):
+            reactor.callFromThread(_cb_get_children, result_code, *args)
+
+        watcher = self._wrap_watcher(watcher)
+        result = zookeeper.aget_children(
+            self.handle, path, watcher, _zk_cb_get_children)
+        self._check_result(result)
+        return d
 
     def get_acl(self, path, acls):
         self._check_connected()
@@ -274,22 +297,23 @@ class ZookeeperClient(object):
 
     def set(self, path, data="", version=-1):
         """
-        Sets the data of a node
+        Sets the data of a node at the given
 
-        @param path
-        @param data
+        @param path: The path of the node whose data we will set.
+        @param data: The data to store on the node.
+        @param version: Integer version value
         """
         self._check_connected()
         d = defer.Deferred()
 
-        def _cb_set(result_code):
+        def _cb_set(result_code, node_stat):
             error = self._check_result(result_code, True)
             if error:
                 return d.errback(error)
-            d.callback(result_code)
+            d.callback(node_stat)
 
-        def _zk_cb_set(handle, result_code):
-            reactor.callFromThread(_cb_set, result_code)
+        def _zk_cb_set(handle, result_code, node_stat):
+            reactor.callFromThread(_cb_set, result_code, node_stat)
 
         result = zookeeper.aset(self.handle, path, data, version, _zk_cb_set)
         self._check_result(result)

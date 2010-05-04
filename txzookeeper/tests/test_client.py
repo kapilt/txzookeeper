@@ -1,4 +1,3 @@
-import time
 import zookeeper
 
 from twisted.internet.defer import Deferred
@@ -324,10 +323,93 @@ class ClientTests(ZookeeperTestCase):
         """
         Attempting to create a node that already exists results in a failure.
         """
+        d = self.client.connect()
+
+        def create_node(client):
+            return self.client.create("/abc")
+
+        def create_duplicate(path):
+            return self.client.create("/abc")
+
+        def verify_fails(*args):
+            self.fail("Invoked Callback")
+
+        def verify_succeeds(failure):
+            self.assertTrue(failure)
+            self.assertEqual(failure.value.args, ("node exists",))
+
+        d.addCallback(create_node)
+        d.addCallback(create_duplicate)
+        d.addCallback(verify_fails)
+        d.addErrback(verify_succeeds)
+        return d
 
     def test_delete_nonexistant_node(self):
         """
         Attempting to delete a node that already exists results in a failure.
+        """
+        d = self.client.connect()
+
+        def delete_node(client):
+            return client.delete("/abcd")
+
+        def verify_fails(*args):
+            self.fail("Invoked Callback")
+
+        def verify_succeeds(failure):
+            self.assertTrue(failure)
+            self.assertEqual(failure.value.args, ("no node",))
+
+        d.addCallback(delete_node)
+        d.addCallback(verify_fails)
+        d.addErrback(verify_succeeds)
+        return d
+
+    def test_set(self):
+        """
+        The client can be used to set contents of a node.
+        """
+        d = self.client.connect()
+
+        def create_node(client):
+            return client.create("/zebra", "horse")
+
+        def set_node(path):
+            return self.client.set("/zebra", "mammal")
+
+        def verify_contents(junk):
+            self.assertEqual(zookeeper.get(self.client.handle, "/zebra")[0],
+                             "mammal")
+
+        d.addCallback(create_node)
+        d.addCallback(set_node)
+        d.addCallback(verify_contents)
+        return d
+
+    def test_set_nonexistant(self):
+        """
+        if the client is used to set the contents of a nonexistant node
+        an error is raised.
+        """
+        d = self.client.connect()
+
+        def set_node(client):
+            return client.set("/xy1")
+
+        def verify_fails(*args):
+            self.fail("Invoked Callback")
+
+        def verify_succeeds(failure):
+            self.assertTrue(failure)
+            self.assertEqual(failure.value.args, ("no node",))
+
+        d.addCallback(set_node)
+        d.addCallback(verify_fails)
+        d.addErrback(verify_succeeds)
+
+    def test_sync(self):
+        """
+        Calling sync flushes the zooke
         """
 
     def test_set_acl(self):
