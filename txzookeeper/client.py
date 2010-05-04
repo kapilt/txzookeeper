@@ -1,9 +1,7 @@
 import zookeeper
-import sys
-import thread
 import time
 
-from twisted.internet import defer, reactor, task
+from twisted.internet import defer, reactor
 
 # Session timeout, not a connect timeout
 DEFAULT_TIMEOUT = 30000
@@ -22,18 +20,6 @@ class Connected(object):
         self.type = type
         self.state = state
         self.path = path
-
-
-class Wrapper(object):
-
-    def __init__(self, target):
-        self.target = target
-
-    def __getattr__(self, name):
-        sys.stdout.write("tx - access %s %s\n"%(name, thread.get_ident()))
-        return getattr(self.target, name)
-
-#zookeeper = Wrapper(zookeeper)
 
 
 class ConnectionTimeout(zookeeper.ZooKeeperException):
@@ -57,15 +43,14 @@ class ZookeeperClient(object):
         if not self.connected:
             raise zookeeper.ConnectionLossException()
 
-    def _check_result(self, result_code, callback=False):
+    def _check_result(self, result_code, callback=False, extra_codes=()):
         error = None
-        if not result_code == zookeeper.OK:
+        if not result_code == zookeeper.OK and not result_code in extra_codes:
             error_msg = zookeeper.zerror(result_code)
             error = zookeeper.ZooKeeperException(error_msg)
-        if error is not None:
-            if not callback:
-                raise error
-            return callback
+            if callback:
+                return error
+            raise error
         return None
 
     def _wrap_watcher(self, watcher):
@@ -173,7 +158,7 @@ class ZookeeperClient(object):
 
         return d
 
-    def create(self, path, data, acls=[ZOO_OPEN_ACL_UNSAFE], flags=0):
+    def create(self, path, data="", acls=[ZOO_OPEN_ACL_UNSAFE], flags=0):
         """
         create a node
 
@@ -216,7 +201,7 @@ class ZookeeperClient(object):
             error = self._check_result(result_code, True)
             if error:
                 return d.errback(error)
-            d.callback()
+            d.callback(result_code)
 
         def _zk_cb_delete(handle, result_code):
             reactor.callFromThread(_cb_delete, result_code)
@@ -238,7 +223,8 @@ class ZookeeperClient(object):
         d = defer.Deferred()
 
         def _cb_exists(result_code, stat):
-            error = self._check_result(result_code, True)
+            error = self._check_result(
+                result_code, True, extra_codes=(zookeeper.NONODE,))
             if error:
                 return d.errback(error)
             d.callback(stat)
@@ -300,7 +286,7 @@ class ZookeeperClient(object):
             error = self._check_result(result_code, True)
             if error:
                 return d.errback(error)
-            d.callback()
+            d.callback(result_code)
 
         def _zk_cb_set(handle, result_code):
             reactor.callFromThread(_cb_set, result_code)
@@ -330,7 +316,7 @@ class ZookeeperClient(object):
             error = self._check_result(result_code, True)
             if error:
                 return d.errback(error)
-            d.callback()
+            d.callback(result_code)
 
         def _zk_cb_sync(handle, result_code):
             reactor.callFromThread(_cb_sync, result_code)

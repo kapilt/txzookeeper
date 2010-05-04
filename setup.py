@@ -1,7 +1,7 @@
 from setuptools import find_packages, setup
 
 
-from txzookeeper import version
+#from txzookeeper import version
 
 
 long_description = """
@@ -9,7 +9,7 @@ long_description = """
 
 setup(
     name="txzookeeper",
-    version=version.txaws,
+ #   version=version.txaws,
     description="Async library for Zookeeper",
     author="txZooKeeper Developers",
     author_email="txzookeeper@lists.launchpad.net",
