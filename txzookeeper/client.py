@@ -33,7 +33,14 @@ class Wrapper(object):
         sys.stdout.write("tx - access %s %s\n"%(name, thread.get_ident()))
         return getattr(self.target, name)
 
-zookeeper = Wrapper(zookeeper)
+#zookeeper = Wrapper(zookeeper)
+
+
+class ConnectionTimeout(zookeeper.ZooKeeperException):
+    """
+    An exception raised when the we can't connect to zookeeper within
+    the user specified timeout period.
+    """
 
 
 class ZookeeperClient(object):
@@ -138,7 +145,7 @@ class ZookeeperClient(object):
             print "tx - twised callback invoked connected"
             if state == zookeeper.CONNECTED_STATE:
                 self.connected = True
-                d.callback(value)
+                d.callback(self)
             else:
                 d.errback(value)
 
@@ -147,8 +154,11 @@ class ZookeeperClient(object):
             reactor.callFromThread(_cb_connected, handle, type, state, path)
 
         # use a scheduled function to ensure a timeout
-        def _check_timeout():
-            d.errback()
+#        def _check_timeout():
+#            if d.called:
+#                return
+#            d.errback(ConnectionTimeout())
+#        reactor.callLater(timeout, _check_timeout)
 
         self.handle = zookeeper.init(
             self.servers, _zk_cb_connected, DEFAULT_TIMEOUT)
@@ -184,6 +194,15 @@ class ZookeeperClient(object):
         return d
 
     def delete(self, path, version=-1):
+        """
+        Delete the node at the given path. If the current node version on the
+        server is more recent than that supplied by the client, a bad version
+        exception wil be thrown. A version of -1 (default) specifies any
+        version
+
+        @param path: the path of the node to be deleted.
+        @param version: the integer version of the node.
+        """
         self._check_connected()
         d = defer.Deferred()
 
