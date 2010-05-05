@@ -66,7 +66,7 @@ class ZookeeperClient(object):
     @property
     def recv_timeout(self):
         """
-        What's the session timeout for this connection.
+        What's the session timeout for this connection, in seconds.
         """
         return zookeeper.recv_timeout(self.handle)
 
@@ -74,7 +74,7 @@ class ZookeeperClient(object):
     def state(self):
         """
         What's the current state of this connection, result is an
-        integer value mapping to zoookeeper module constants.
+        integer value corresponding to zoookeeper module constants.
         """
         return zookeeper.state(self.handle)
 
@@ -84,16 +84,19 @@ class ZookeeperClient(object):
         The connection's client id, useful when introspecting the server logs
         for specific client activity.
         """
+        if self.handle is None:
+            return None
         return zookeeper.client_id(self.handle)
 
     @property
     def unrecoverable(self):
         """
-        Boolean value representing whether the current connection be recovered.
+        Boolean value representing whether the current connection can be
+        recovered.
         """
         return bool(zookeeper.is_unrecoverable(self.handle))
 
-    def auth(self, scheme, identity):
+    def add_auth(self, scheme, identity):
         """
         Adds an authentication identity to this connection. A connection
         can use multiple authentication identities at the same time, all
@@ -101,18 +104,30 @@ class ZookeeperClient(object):
 
         @param scheme: a string specifying a an authentication scheme
                        valid values include 'digest'.
-        @param identity: a string
+        @param identity: a string containingusername and password colon
+                      separated for example 'mary:apples'
         """
         self._check_connected()
+        d = defer.Deferred()
+
+        def _cb_authenticated(result_code):
+            error = self._check_result(result_code)
+            if error:
+                return d.errback(error)
+            d.callback(self)
+
+        def _zk_cb_connected(handle, *args):
+            reactor.callFromThread(_cb_authenticated, *args)
+
+        result = zookeeper.add_auth(
+            self.handle, scheme, identity, _zk_cb_connected)
+        self._check_result(result)
+        return d
 
     def close(self, force=False):
         """
         Close the underlying socket connection and zookeeper server side
-        session. Due to sensitiveies of the underlying libraries if there
-        any outstanding async calls, we automatically reschedule the
-        close till outstanding requests are completed. if the force
-        parameter is passed we raise an exception if there are outstanding
-        async requests.
+        session
 
         @param force: boolean, require the connection to be closed now or
                       an exception be raised.
@@ -120,7 +135,11 @@ class ZookeeperClient(object):
         if not self.connected:
             return
 
+        # We sleep to avoid an unfortunate deadlock scenario where a callback
+        # thread hasn't completed even though the twisted deferred chain has
+        # resumed. See https://issues.apache.org/jira/browse/ZOOKEEPER-763
         time.sleep(0.1)
+
         result = zookeeper.close(self.handle)
         self.connected = False
         self._check_result(result)
@@ -160,7 +179,7 @@ class ZookeeperClient(object):
 
     def create(self, path, data="", acls=[ZOO_OPEN_ACL_UNSAFE], flags=0):
         """
-        create a node
+        Create a node with the given data and access control.
 
         @params path: The path to the node
         @params data: The node's content
@@ -289,7 +308,13 @@ class ZookeeperClient(object):
         self._check_result(result)
         return d
 
-    def get_acl(self, path, acls):
+    def get_acl(self, path):
+        """
+        Get the list of acls that apply to node with the give path.
+
+        Each acl is a dictionary containing keys/values for scheme, id,
+        and perms.
+        """
         self._check_connected()
         d = defer.Deferred()
 
@@ -307,6 +332,27 @@ class ZookeeperClient(object):
         return d
 
     def set_acl(self, path, acls, version=-1):
+        """
+        Set the list of acls on a node.
+
+        Each acl is a dictionary containing keys/values for scheme, id,
+        and perms. The value for id is username:hash_value The hash_value
+        component is the base64 encoded sha1 hash of a username and
+        password that's colon separated. For example
+
+        >>> import hashlib, base64
+        >>> id = '%s:%s'%('mary',
+                          base64.b64encode(hashlib.new('sha1', 'mary:apples')))
+        >>> id
+        'mary:asdf89u12'
+        >>> acl = {'id':id, 'scheme':'digest', 'perms':zookeeper.PERM_ALL}
+
+        @param path: The string path to the node.
+        @param acls: A list of acl dictionaries.
+        @param version: A version id of the node we're modifying, if this
+                        doesn't match the version on the server, then a
+                        BadVersionException is raised.
+        """
         self._check_connected()
         d = defer.Deferred()
 
@@ -358,22 +404,22 @@ class ZookeeperClient(object):
 
     def sync(self, path="/"):
         """
-        Flushes the zookeeper leader
+        Flushes the zookeeper connection to the leader.
 
-        @param path: The root path to flush, all child nodes are also flushedd.
+        @param path: The root path to flush, all child nodes are also flushed.
         """
         self._check_connected()
         d = defer.Deferred()
 
-        def _cb_sync(result_code):
+        def _cb_sync(result_code, path):
             error = self._check_result(result_code, True)
             if error:
                 return d.errback(error)
-            d.callback(result_code)
+            d.callback(path)
 
-        def _zk_cb_sync(handle, result_code):
-            reactor.callFromThread(_cb_sync, result_code)
+        def _zk_cb_sync(handle, result_code, path):
+            reactor.callFromThread(_cb_sync, result_code, path)
 
-        result = zookeeper.async(path, _zk_cb_sync)
+        result = zookeeper.async(self.handle, path, _zk_cb_sync)
         self._check_result(result)
         return d

@@ -1,5 +1,6 @@
 import zookeeper
-
+import hashlib
+import base64
 from twisted.internet.defer import Deferred
 from txzookeeper.tests import ZookeeperTestCase
 from txzookeeper.client import (
@@ -265,12 +266,8 @@ class ClientTests(ZookeeperTestCase):
         def verify_exists(node_stat):
             self.assertEqual(node_stat, None)
 
-        def errback(failure):
-            print failure
-
         d.addCallback(check_exists)
         d.addCallback(verify_exists)
-        d.addErrback(errback)
         return d
 
     def test_exists_with_nonexistant_watcher(self):
@@ -483,15 +480,53 @@ class ClientTests(ZookeeperTestCase):
         Setting an invalid watcher raises a syntaxerror.
         """
 
-    def test_authenticate(self):
+    def test_add_auth(self):
         """
-        The connection can be authenticated.
+        The connection can have zero or more authentication infos. This
+        authentication infos are used when accessing nodes to veriy access
+        against the node's acl.
         """
+        d = self.client.connect()
 
-    def test_sync(self):
-        """
-        Calling sync flushes the zooke
-        """
+        credentials = "mary:apples"
+        user, password = credentials.split(":")
+        identity = "%s:%s" % (
+            user,
+            base64.b64encode(hashlib.new('sha1', credentials).digest()))
+        acl = {'id': identity, 'scheme': 'digest', 'perms': zookeeper.PERM_ALL}
+        failed = []
+
+        def add_auth_one(client):
+            return client.add_auth("digest", "bob:martini")
+
+        def create_node(client):
+            return client.create("/orchard", "apple trees", acls=[acl])
+
+        def try_node_access(path):
+            return self.client.set("/orchard", "bar")
+
+        def node_access_failed(failure):
+            self.assertEqual(failure.value.args, ("not authenticated",))
+            failed.append(True)
+            return
+
+        def add_auth_two(result):
+            return self.client.add_auth("digest", credentials)
+
+        def verify_node_access(stat):
+            self.assertEqual(stat['version'], 1)
+            self.assertEqual(stat['dataLength'], 3)
+            self.assertTrue(failed) # we should have hit the errback
+
+        d.addCallback(add_auth_one)
+        d.addCallback(create_node)
+        d.addCallback(try_node_access)
+        d.addErrback(node_access_failed)
+        d.addCallback(add_auth_two)
+        d.addCallback(try_node_access)
+        d.addCallback(verify_node_access)
+
+        return d
 
     def test_set_acl(self):
         """
@@ -540,3 +575,49 @@ class ClientTests(ZookeeperTestCase):
         d.addCallback(create_node)
 
         return d
+
+    def test_client_id(self):
+        """
+        The client exposes a client id which is useful when examining
+        the server logs.
+        """
+
+        # if we're not connected returns none
+        self.assertEqual(self.client.client_id, None)
+        d = self.client.connect()
+
+        def verify_client_id(client):
+            self.assertTrue(isinstance(self.client.client_id, tuple))
+            self.assertTrue(isinstance(self.client.client_id[0], long))
+            self.assertTrue(isinstance(self.client.client_id[1], str))
+
+        d.addCallback(verify_client_id)
+        return d
+
+    def test_sync(self):
+        """
+        The sync method on the client flushes the connection to leader.
+
+        In practice this seems hard to test functionally, but we at
+        least verify the method executes without issue.
+        """
+        d = self.client.connect()
+
+        def create_node(client):
+            return client.create("/abc")
+
+        def client_sync(path):
+            return self.client.sync(path)
+
+        def verify_sync(result):
+            pass
+
+        d.addCallback(create_node)
+        d.addCallback(client_sync)
+        d.addCallback(verify_sync)
+        return d
+
+    def test_unrecoverable(self):
+        """
+        The unrecoverable property specifies whether we
+        """
