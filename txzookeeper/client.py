@@ -1,10 +1,9 @@
 import zookeeper
-import time
 
 from twisted.internet import defer, reactor
 
 # Session timeout, not a connect timeout
-DEFAULT_TIMEOUT = 30000
+DEFAULT_SESSION_TIMEOUT = 10000
 
 # Default node acl
 ZOO_OPEN_ACL_UNSAFE = {
@@ -34,14 +33,15 @@ class ZookeeperClient(object):
     An asynchronous twisted client.
     """
 
-    def __init__(self, servers):
-        self.servers = servers
+    def __init__(self, servers=None, session_timeout=None):
+        self._servers = servers
+        self._session_timeout = session_timeout
         self.connected = False
         self.handle = None
 
     def _check_connected(self):
         if not self.connected:
-            raise zookeeper.ConnectionLossException()
+            raise zookeeper.ZooKeeperException("not connected")
 
     def _check_result(self, result_code, callback=False, extra_codes=()):
         error = None
@@ -57,18 +57,27 @@ class ZookeeperClient(object):
         if watcher is None:
             return watcher
         if not callable(watcher):
-            raise SyntaxError("Invalid Watcher")
+            raise SyntaxError("invalid watcher")
 
         def wrapper(handle, type, state, path):
             reactor.callFromThread(watcher, type, path)
         return wrapper
 
     @property
-    def recv_timeout(self):
+    def servers(self):
         """
-        What's the session timeout for this connection, in seconds.
+        Servers that we're connected to or None if the client is not connected
         """
-        return zookeeper.recv_timeout(self.handle)
+        if self.connected:
+            return self._servers
+
+    @property
+    def session_timeout(self):
+        """
+        What's the negotiated session timeout for this connection, in seconds.
+        """
+        if self.connected:
+            return zookeeper.recv_timeout(self.handle)
 
     @property
     def state(self):
@@ -76,7 +85,8 @@ class ZookeeperClient(object):
         What's the current state of this connection, result is an
         integer value corresponding to zoookeeper module constants.
         """
-        return zookeeper.state(self.handle)
+        if self.connected:
+            return zookeeper.state(self.handle)
 
     @property
     def client_id(self):
@@ -111,7 +121,7 @@ class ZookeeperClient(object):
         d = defer.Deferred()
 
         def _cb_authenticated(result_code):
-            error = self._check_result(result_code)
+            error = self._check_result(result_code, callback=True)
             if error:
                 return d.errback(error)
             d.callback(self)
@@ -127,7 +137,7 @@ class ZookeeperClient(object):
     def close(self, force=False):
         """
         Close the underlying socket connection and zookeeper server side
-        session
+        session.
 
         @param force: boolean, require the connection to be closed now or
                       an exception be raised.
@@ -135,26 +145,28 @@ class ZookeeperClient(object):
         if not self.connected:
             return
 
-        # We sleep to avoid an unfortunate deadlock scenario where a callback
-        # thread hasn't completed even though the twisted deferred chain has
-        # resumed. See https://issues.apache.org/jira/browse/ZOOKEEPER-763
-        time.sleep(0.1)
-
         result = zookeeper.close(self.handle)
         self.connected = False
         self._check_result(result)
         return result
 
-    def connect(self, timeout=10):
+    def connect(self, servers=None, timeout=10):
         """
-        Establish a connection to the given zookeeper server(s)
+        Establish a connection to the given zookeeper server(s).
+
+        @param servers: A string specifying the servers and their ports to
+                        connect to.
         @param timeout: How many seconds to wait on a connection to the
                         zookeeper servers.
         @returns A deferred that's fired when the connection is established.
         """
         d = defer.Deferred()
 
+        if self.connected:
+            raise zookeeper.ZooKeeperException("Already Connected")
+
         def _cb_connected(handle, type, state, path):
+            delayed.cancel()
             value = Connected(handle, type, state, path)
             if state == zookeeper.CONNECTED_STATE:
                 self.connected = True
@@ -166,14 +178,18 @@ class ZookeeperClient(object):
             reactor.callFromThread(_cb_connected, handle, type, state, path)
 
         # use a scheduled function to ensure a timeout
-#        def _check_timeout():
-#            if d.called:
-#                return
-#            d.errback(ConnectionTimeout())
-#        reactor.callLater(timeout, _check_timeout)
+        def _check_timeout():
+            d.errback(ConnectionTimeout())
+        delayed = reactor.callLater(timeout, _check_timeout)
+
+        if self._session_timeout is None:
+            self._session_timeout = DEFAULT_SESSION_TIMEOUT
+
+        if servers is not None:
+            self._servers = servers
 
         self.handle = zookeeper.init(
-            self.servers, _zk_cb_connected, DEFAULT_TIMEOUT)
+            self._servers, _zk_cb_connected, self._session_timeout)
 
         return d
 
@@ -208,7 +224,7 @@ class ZookeeperClient(object):
         Delete the node at the given path. If the current node version on the
         server is more recent than that supplied by the client, a bad version
         exception wil be thrown. A version of -1 (default) specifies any
-        version
+        version.
 
         @param path: the path of the node to be deleted.
         @param version: the integer version of the node.
@@ -318,16 +334,16 @@ class ZookeeperClient(object):
         self._check_connected()
         d = defer.Deferred()
 
-        def _cb_get_acl(result_code, acls):
+        def _cb_get_acl(result_code, acls, stat):
             error = self._check_result(result_code, True)
             if error:
                 return d.errback(error)
-            d.callback(acls)
+            d.callback((acls, stat))
 
-        def _zk_cb_get_children(result_code, acls):
-            reactor.callFromThread(_cb_get_acl, result_code, acls)
+        def _zk_cb_get_children(handle, result_code, acls, stat):
+            reactor.callFromThread(_cb_get_acl, result_code, acls, stat)
 
-        result = zookeeper.aget_acl(self.handle, path)
+        result = zookeeper.aget_acl(self.handle, path, _zk_cb_get_children)
         self._check_result(result)
         return d
 
@@ -341,10 +357,11 @@ class ZookeeperClient(object):
         password that's colon separated. For example
 
         >>> import hashlib, base64
-        >>> id = '%s:%s'%('mary',
-                          base64.b64encode(hashlib.new('sha1', 'mary:apples')))
+        >>> digest = base64.b64encode(
+        ...                 hashlib.new('sha1', 'mary:apples').digest()))
+        >>> id = '%s:%s'%('mary', digest)
         >>> id
-        'mary:asdf89u12'
+        'mary:9MTr9XuZvmudebp9aOo4DtXwyII='
         >>> acl = {'id':id, 'scheme':'digest', 'perms':zookeeper.PERM_ALL}
 
         @param path: The string path to the node.
@@ -372,7 +389,10 @@ class ZookeeperClient(object):
 
     def set(self, path, data="", version=-1):
         """
-        Sets the data of a node at the given
+        Sets the data of a node at the given path. If the current node version
+        on the server is more recent than that supplied by the client, a bad
+        version exception wil be thrown. A version of -1 (default) specifies
+        any version.
 
         @param path: The path of the node whose data we will set.
         @param data: The data to store on the node.
@@ -400,6 +420,7 @@ class ZookeeperClient(object):
 
         @param: watcher function
         """
+        watcher = self._wrap_watcher(watcher)
         zookeeper.set_watcher(self.handle, watcher)
 
     def sync(self, path="/"):

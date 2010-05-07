@@ -1,7 +1,13 @@
-import zookeeper
+
 import hashlib
 import base64
+
+import zookeeper
+
+from mocker import ANY
+
 from twisted.internet.defer import Deferred
+
 from txzookeeper.tests import ZookeeperTestCase
 from txzookeeper.client import (
     ZookeeperClient, ZOO_OPEN_ACL_UNSAFE)
@@ -13,7 +19,7 @@ class ClientTests(ZookeeperTestCase):
 
     def setUp(self):
         super(ClientTests, self).setUp()
-        self.client = ZookeeperClient("127.0.0.1:2181")
+        self.client = ZookeeperClient("127.0.0.1:2181", 3000)
         self.client2 = None
 
     def tearDown(self):
@@ -475,11 +481,6 @@ class ClientTests(ZookeeperTestCase):
         d.addCallback(verify_children)
         return d
 
-    def test_invalid_watcher(self):
-        """
-        Setting an invalid watcher raises a syntaxerror.
-        """
-
     def test_add_auth(self):
         """
         The connection can have zero or more authentication infos. This
@@ -497,7 +498,11 @@ class ClientTests(ZookeeperTestCase):
         failed = []
 
         def add_auth_one(client):
-            return client.add_auth("digest", "bob:martini")
+            d = client.add_auth("digest", "bob:martini")
+            # a little hack to avoid slowness around adding auth
+            # see https://issues.apache.org/jira/browse/ZOOKEEPER-770
+            client.get_children("/orchard")
+            return d
 
         def create_node(client):
             return client.create("/orchard", "apple trees", acls=[acl])
@@ -511,7 +516,11 @@ class ClientTests(ZookeeperTestCase):
             return
 
         def add_auth_two(result):
-            return self.client.add_auth("digest", credentials)
+            d = self.client.add_auth("digest", credentials)
+            # a little hack to avoid slowness around adding auth
+            # see https://issues.apache.org/jira/browse/ZOOKEEPER-770
+            self.client.get_children("/orchard")
+            return d
 
         def verify_node_access(stat):
             self.assertEqual(stat['version'], 1)
@@ -569,11 +578,12 @@ class ClientTests(ZookeeperTestCase):
         def get_acl(path):
             return self.client.get_acl(path)
 
-        def verify_acl(acls):
+        def verify_acl((acls, stat)):
             self.assertEqual(acls, [PUBLIC_ACL])
 
         d.addCallback(create_node)
-
+        d.addCallback(get_acl)
+        d.addCallback(verify_acl)
         return d
 
     def test_client_id(self):
@@ -617,7 +627,150 @@ class ClientTests(ZookeeperTestCase):
         d.addCallback(verify_sync)
         return d
 
-    def test_unrecoverable(self):
+    def test_property_servers(self):
         """
-        The unrecoverable property specifies whether we
+        The servers property of the client, shows which if any servers
+        it might be connected, else it returns.
         """
+        self.assertEqual(self.client.servers, None)
+        d = self.client.connect()
+
+        def verify_servers(client):
+            self.assertEqual(client.servers, "127.0.0.1:2181")
+
+        d.addCallback(verify_servers)
+        return d
+
+    def test_property_session_timeout(self):
+        self.assertEqual(self.client.session_timeout, None)
+        d = self.client.connect()
+
+        def verify_session_timeout(client):
+            self.assertEqual(client.session_timeout, 4000)
+
+        d.addCallback(verify_session_timeout)
+        return d
+
+    def test_property_unrecoverable(self):
+        """
+        The unrecoverable property specifies whether the connection can be
+        recovered or must be discarded.
+        """
+        d = self.client.connect()
+
+        def verify_recoverable(client):
+            self.assertEqual(client.unrecoverable, False)
+            return client
+
+        d.addCallback(verify_recoverable)
+        return d
+
+    def test_invalid_watcher(self):
+        """
+        Setting an invalid watcher raises a syntaxerror.
+        """
+        d = self.client.connect()
+
+        def set_invalid_watcher(client):
+            return client.set_watcher(1)
+
+        def verify_invalid(failure):
+            self.assertEqual(failure.value.args, ("invalid watcher",))
+            self.assertTrue(isinstance(failure.value, SyntaxError))
+
+        d.addCallback(set_invalid_watcher)
+        d.addErrback(verify_invalid)
+        return d
+
+    def test_connect_ensured(self):
+        """
+        All of the client apis (with the exception of connect) attempt
+        to ensure the client is connected before executing an operation.
+        """
+        self.assertRaises(
+            zookeeper.ZooKeeperException, self.client.get_children, "/abc")
+
+        self.assertRaises(
+            zookeeper.ZooKeeperException, self.client.create, "/abc")
+
+        self.assertRaises(
+            zookeeper.ZooKeeperException, self.client.set, "/abc", "123")
+
+    def test_connect_multiple_raises(self):
+        """
+        Attempting to connect on a client that is already connected raises
+        an exception.
+        """
+        d = self.client.connect()
+
+        def connect_again(client):
+            self.assertRaises(
+                zookeeper.ZooKeeperException, client.connect)
+
+        d.addCallback(connect_again)
+        return d
+
+    def test_bad_result_raises_error(self):
+        """
+        A not OK return from zookeeper api method result raises an exception.
+        """
+        mock_acreate = self.mocker.replace("zookeeper.acreate")
+        mock_acreate(ANY, ANY, ANY, ANY, ANY, ANY)
+        self.mocker.result(-100)
+        self.mocker.replay()
+
+        d = self.client.connect()
+
+        def verify_failure(client):
+            self.assertRaises(
+                zookeeper.ZooKeeperException, client.create, "/abc")
+
+        d.addCallback(verify_failure)
+        return d
+
+    def test_global_watcher(self):
+        """
+        A global watcher can be set that recieves notices on all
+        changes of nodes touched by the handle.
+        """
+        d = self.client.connect()
+
+        observed = []
+        zookeeper.set_debug_level(zookeeper.LOG_LEVEL_DEBUG)
+
+        def watch(*args):
+            print "watch", observed
+            observed.append(args)
+
+        def set_global_watcher(client):
+            client.set_watcher(watch)
+            return client
+
+        def create_node(client):
+            return client.create("/planets", "system")
+
+        def get_children(path):
+            return self.client.get_children(path)
+
+        def new_connection(extra):
+            self.client2 = ZookeeperClient("127.0.0.1:2181")
+            return self.client2.connect()
+
+        def create_child(client):
+            return self.client2.create("/planets/mars", "hot")
+
+        def modify_node(path):
+            return self.client2.set("/planets", "earth's solar system")
+
+        def verify_observed(stat):
+            print "observed", len(observed)
+
+        d.addCallback(set_global_watcher)
+        d.addCallback(create_node)
+        d.addCallback(get_children)
+        d.addCallback(new_connection)
+        d.addCallback(create_child)
+        d.addCallback(modify_node)
+        d.addCallback(verify_observed)
+
+        return d
