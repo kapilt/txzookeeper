@@ -1,19 +1,11 @@
 
-
-figure out watchers
-
-zookeeper connection timeout
-
-acls
-
-proper exception mapping
-
-
------
-
-bug upstream
+bugs to file upstream
 
  - you can set acl on a non existant node.
+ - memory leak every api invocation.
 
+ observed while trying xtest_get_children_with_watcher
 
-
+ - async get children with watcher seems broken.
+ - segfault if close during completion.
+ - getting a watch notification when closing a connection, segfaults.

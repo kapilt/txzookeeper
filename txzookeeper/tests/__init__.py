@@ -20,7 +20,7 @@ class ZookeeperTestCase(TestCase, MockerTestCase):
     def tearDown(self):
         super(ZookeeperTestCase, self).tearDown()
         zookeeper.set_log_stream(sys.stderr) # reset to default
-        zookeeper.set_debug_level(zookeeper.LOG_LEVEL_INFO)
+        zookeeper.set_debug_level(zookeeper.LOG_LEVEL_DEBUG)
         self.log_file.close()
 
     def get_log(self):

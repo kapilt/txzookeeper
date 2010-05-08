@@ -10,7 +10,8 @@ from twisted.internet.defer import Deferred
 
 from txzookeeper.tests import ZookeeperTestCase
 from txzookeeper.client import (
-    ZookeeperClient, ZOO_OPEN_ACL_UNSAFE)
+    ZookeeperClient, ZOO_OPEN_ACL_UNSAFE, ConnectionTimeoutException,
+    ConnectionException)
 
 PUBLIC_ACL = ZOO_OPEN_ACL_UNSAFE
 
@@ -519,17 +520,17 @@ class ClientTests(ZookeeperTestCase):
         d.addErrback(verify_failure)
         return d
 
-    def test_get_children_with_watch(self):
+    # seems to be a segfault on this one.
+    def xtest_get_children_with_watch(self):
         """
         The get_children method optionally takes a watcher callable which will
         be notified when the node is modified, or a child deleted or added.
         """
         d = self.client.connect()
+        watch_deferred = Deferred()
 
-        observed = []
-
-        def watch_children(*args):
-            observed.append(args)
+        def watch_children(type, state, path):
+            watch_deferred.callback((type, path))
 
         def create_node(client):
             return client.create("/jupiter")
@@ -538,15 +539,25 @@ class ClientTests(ZookeeperTestCase):
             return self.client.get_children(path, watch_children)
 
         def new_connection(children):
+            self.assertFalse(children)
             self.client2 = ZookeeperClient("127.0.0.1:2181")
             return self.client2.connect()
 
-        def create_child(client):
-            return client.create("/jupiter/io")
+        def trigger_watch(client):
+            zookeeper.create(
+                self.client2.handle, "/jupiter/io", "", [PUBLIC_ACL], 0)
+            return watch_deferred
 
-        def verify_observed(path):
-            self.assertTrue(observed)
+        def verify_observed(data):
+            print "Verify", data
+            self.assertTrue(data)
 
+        d.addCallback(create_node)
+        d.addCallback(get_children)
+        d.addCallback(new_connection)
+        d.addCallback(trigger_watch)
+        d.addCallback(verify_observed)
+        #d.addCallback(verify_observed)
         return d
 
     def test_get_no_children(self):
@@ -641,17 +652,22 @@ class ClientTests(ZookeeperTestCase):
 
         return d
 
-    def xtest_add_auth_error(self):
+    def test_add_auth_with_error(self):
         """
         On add_auth error the deferred errback is invoked with the exception.
         """
         d = self.client.connect()
 
+        def _fake_auth(handle, scheme, identity, callback):
+            callback(0, zookeeper.AUTHFAILED)
+            return 0
+
+        mock_auth = self.mocker.replace("zookeeper.add_auth")
+        mock_auth(ANY, ANY, ANY, ANY)
+        self.mocker.call(_fake_auth)
+        self.mocker.replay()
+
         def add_auth(client):
-            mock_client = self.mocker.patch(client)
-            mock_client._check_result(ANY, True)
-            self.mocker.result(zookeeper.AuthFailedException())
-            self.mocker.replay()
             d = self.client.add_auth("digest", "mary:lamb")
             return d
 
@@ -659,7 +675,11 @@ class ClientTests(ZookeeperTestCase):
             self.assertTrue(
                 isinstance(failure.value, zookeeper.AuthFailedException))
 
+        def assert_failed(result):
+            self.fail("should not get here")
+
         d.addCallback(add_auth)
+        d.addCallback(assert_failed)
         d.addErrback(verify_failure)
         return d
 
@@ -901,18 +921,55 @@ class ClientTests(ZookeeperTestCase):
         d.addCallback(verify_connected)
         return d
 
-    def xtest_connect_timeout(self):
+    def test_connect_with_error(self):
+        """
+        An error in the connect invokes the deferred errback with exception.
+        """
+
+        def _fake_init(handle, callback, timeout):
+            callback(0, 0, zookeeper.ASSOCIATING_STATE, "")
+            return 0
+        mock_init = self.mocker.replace("zookeeper.init")
+        mock_init(ANY, ANY, ANY)
+        self.mocker.call(_fake_init)
+        self.mocker.replay()
+
+        d = self.client.connect()
+
+        def verify_error(failure):
+            self.assertFalse(self.client.connected)
+            self.assertTrue(isinstance(failure.value, ConnectionException))
+            self.assertEqual(failure.value.args[0], "connection error")
+
+        def assert_failed(any):
+            self.fail("should not be invoked")
+
+        d.addCallback(assert_failed)
+        d.addErrback(verify_error)
+        return d
+
+    def test_connect_timeout(self):
         """
         A timeout in seconds can be specified on connect, if the client hasn't
         connected before then, then an errback is invoked with a timeout
         exception.
         """
-        d = self.client.connect(timeout=0)
+        mock_init = self.mocker.replace("zookeeper.init")
+        mock_init(ANY, ANY, ANY)
+        self.mocker.result(0)
+        self.mocker.replay()
+
+        d = self.client.connect(timeout=0.1)
 
         def verify_timeout(failure):
-            return
-        d.addErrback(d)
+            self.assertTrue(
+                isinstance(failure.value, ConnectionTimeoutException))
 
+        def assert_failure(any):
+            self.fail("should not be reached")
+
+        d.addCallback(assert_failure)
+        d.addErrback(verify_timeout)
         return d
 
     def test_connect_ensured(self):
@@ -967,6 +1024,9 @@ class ClientTests(ZookeeperTestCase):
         connection state changes. Technically zookeeper would also use this as
         a global watcher for node state changes, but zkpython doesn't expose
         that api, as its mostly considered legacy.
+
+        its out of scope to simulate a connection level event within unit tests
+        such as the server restarting.
         """
         d = self.client.connect()
 
@@ -974,7 +1034,6 @@ class ClientTests(ZookeeperTestCase):
         zookeeper.set_debug_level(zookeeper.LOG_LEVEL_DEBUG)
 
         def watch(*args):
-            print "watch", observed
             observed.append(args)
 
         def set_global_watcher(client):

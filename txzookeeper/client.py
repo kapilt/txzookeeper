@@ -1,3 +1,4 @@
+#! /bin/bash
 import zookeeper
 
 from twisted.internet import defer, reactor
@@ -39,15 +40,20 @@ ERROR_MAPPING = {
     zookeeper.UNIMPLEMENTED: zookeeper.UnimplementedException}
 
 
-class Connected(object):
+class NotConnectedException(zookeeper.ZooKeeperException):
+    """
+    Raised if an attempt is made to use the client's api before the
+    client has a connection to a zookeeper server.
+    """
 
-    def __init__(self, type, state, path):
-        self.type = type
-        self.state = state
-        self.path = path
+
+class ConnectionException(zookeeper.ZooKeeperException):
+    """
+    Raised if an error occurs during the client's connection attempt.
+    """
 
 
-class ConnectionTimeout(zookeeper.ZooKeeperException):
+class ConnectionTimeoutException(zookeeper.ZooKeeperException):
     """
     An exception raised when the we can't connect to zookeeper within
     the user specified timeout period.
@@ -67,7 +73,7 @@ class ZookeeperClient(object):
 
     def _check_connected(self):
         if not self.connected:
-            raise zookeeper.ZooKeeperException("not connected")
+            raise NotConnectedException("not connected")
 
     def _check_result(self, result_code, callback=False, extra_codes=()):
         error = None
@@ -166,8 +172,7 @@ class ZookeeperClient(object):
             d.callback(self)
 
         callback = self._zk_thread_callback(_cb_authenticated)
-        result = zookeeper.add_auth(
-            self.handle, scheme, identity, callback)
+        result = zookeeper.add_auth(self.handle, scheme, identity, callback)
         self._check_result(result)
         return d
 
@@ -204,18 +209,19 @@ class ZookeeperClient(object):
 
         def _cb_connected(type, state, path):
             delayed.cancel()
-            value = Connected(type, state, path)
             if state == zookeeper.CONNECTED_STATE:
                 self.connected = True
                 d.callback(self)
             else:
-                d.errback(value)
+                d.errback(
+                    ConnectionException("connection error", type, state, path))
 
         callback = self._zk_thread_callback(_cb_connected)
 
         # use a scheduled function to ensure a timeout
         def _check_timeout():
-            d.errback(ConnectionTimeout())
+            d.errback(
+                ConnectionTimeoutException("could not connect before timeout"))
         delayed = reactor.callLater(timeout, _check_timeout)
 
         if self._session_timeout is None:
@@ -298,7 +304,6 @@ class ZookeeperClient(object):
 
         callback = self._zk_thread_callback(_cb_exists)
         watcher = self._wrap_watcher(watcher)
-
         result = zookeeper.aexists(self.handle, path, watcher, callback)
         self._check_result(result)
         return d
@@ -345,8 +350,7 @@ class ZookeeperClient(object):
 
         callback = self._zk_thread_callback(_cb_get_children, no_handle=True)
         watcher = self._wrap_watcher(watcher)
-        result = zookeeper.aget_children(
-            self.handle, path, watcher, callback)
+        result = zookeeper.aget_children(self.handle, path, watcher, callback)
         self._check_result(result)
         return d
 
