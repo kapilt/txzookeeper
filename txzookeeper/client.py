@@ -2,20 +2,46 @@ import zookeeper
 
 from twisted.internet import defer, reactor
 
-# Session timeout, not a connect timeout
+# Default session timeout
 DEFAULT_SESSION_TIMEOUT = 10000
 
-# Default node acl
+# Default node acl (public)
 ZOO_OPEN_ACL_UNSAFE = {
     "perms": zookeeper.PERM_ALL,
     "scheme": "world",
     "id": "anyone"}
 
+# Map result codes to exceptions classes.
+ERROR_MAPPING = {
+    zookeeper.APIERROR: zookeeper.ApiErrorException,
+    zookeeper.AUTHFAILED: zookeeper.AuthFailedException,
+    zookeeper.BADARGUMENTS: zookeeper.BadArgumentsException,
+    zookeeper.BADVERSION: zookeeper.BadVersionException,
+    zookeeper.CLOSING: zookeeper.ClosingException,
+    zookeeper.CONNECTIONLOSS: zookeeper.ConnectionLossException,
+    zookeeper.DATAINCONSISTENCY: zookeeper.DataInconsistencyException,
+    zookeeper.INVALIDACL: zookeeper.InvalidACLException,
+    zookeeper.INVALIDCALLBACK: zookeeper.InvalidCallbackException,
+    zookeeper.INVALIDSTATE: zookeeper.InvalidStateException,
+    zookeeper.MARSHALLINGERROR: zookeeper.MarshallingErrorException,
+    zookeeper.NOAUTH: zookeeper.NoAuthException,
+    zookeeper.NOCHILDRENFOREPHEMERALS: (
+        zookeeper.NoChildrenForEphemeralsException),
+    zookeeper.NONODE: zookeeper.NoNodeException,
+    zookeeper.NODEEXISTS: zookeeper.NodeExistsException,
+    zookeeper.NOTEMPTY: zookeeper.NotEmptyException,
+    zookeeper.NOTHING: zookeeper.NothingException,
+    zookeeper.OPERATIONTIMEOUT: zookeeper.OperationTimeoutException,
+    zookeeper.RUNTIMEINCONSISTENCY: zookeeper.RuntimeInconsistencyException,
+    zookeeper.SESSIONEXPIRED: zookeeper.SessionExpiredException,
+    zookeeper.SESSIONMOVED: zookeeper.SessionMovedException,
+    zookeeper.SYSTEMERROR: zookeeper.SystemErrorException,
+    zookeeper.UNIMPLEMENTED: zookeeper.UnimplementedException}
+
 
 class Connected(object):
 
-    def __init__(self, handle, type, state, path):
-        self.handle = handle
+    def __init__(self, type, state, path):
         self.type = type
         self.state = state
         self.path = path
@@ -30,7 +56,7 @@ class ConnectionTimeout(zookeeper.ZooKeeperException):
 
 class ZookeeperClient(object):
     """
-    An asynchronous twisted client.
+    An asynchronous twisted client for zookeeper.
     """
 
     def __init__(self, servers=None, session_timeout=None):
@@ -47,7 +73,9 @@ class ZookeeperClient(object):
         error = None
         if not result_code == zookeeper.OK and not result_code in extra_codes:
             error_msg = zookeeper.zerror(result_code)
-            error = zookeeper.ZooKeeperException(error_msg)
+            error_class = ERROR_MAPPING.get(
+                result_code, zookeeper.ZooKeeperException)
+            error = error_class(error_msg)
             if callback:
                 return error
             raise error
@@ -58,9 +86,15 @@ class ZookeeperClient(object):
             return watcher
         if not callable(watcher):
             raise SyntaxError("invalid watcher")
+        return self._zk_thread_callback(watcher)
 
-        def wrapper(handle, type, state, path):
-            reactor.callFromThread(watcher, type, path)
+    def _zk_thread_callback(self, func, no_handle=False):
+
+        def wrapper(handle, *args): # pragma: no cover
+            if no_handle:
+                reactor.callFromThread(func, handle, *args)
+            else:
+                reactor.callFromThread(func, *args)
         return wrapper
 
     @property
@@ -126,11 +160,9 @@ class ZookeeperClient(object):
                 return d.errback(error)
             d.callback(self)
 
-        def _zk_cb_connected(handle, *args):
-            reactor.callFromThread(_cb_authenticated, *args)
-
+        callback = self._zk_thread_callback(_cb_authenticated)
         result = zookeeper.add_auth(
-            self.handle, scheme, identity, _zk_cb_connected)
+            self.handle, scheme, identity, callback)
         self._check_result(result)
         return d
 
@@ -165,17 +197,16 @@ class ZookeeperClient(object):
         if self.connected:
             raise zookeeper.ZooKeeperException("Already Connected")
 
-        def _cb_connected(handle, type, state, path):
+        def _cb_connected(type, state, path):
             delayed.cancel()
-            value = Connected(handle, type, state, path)
+            value = Connected(type, state, path)
             if state == zookeeper.CONNECTED_STATE:
                 self.connected = True
                 d.callback(self)
             else:
                 d.errback(value)
 
-        def _zk_cb_connected(handle, type, state, path):
-            reactor.callFromThread(_cb_connected, handle, type, state, path)
+        callback = self._zk_thread_callback(_cb_connected)
 
         # use a scheduled function to ensure a timeout
         def _check_timeout():
@@ -189,7 +220,7 @@ class ZookeeperClient(object):
             self._servers = servers
 
         self.handle = zookeeper.init(
-            self._servers, _zk_cb_connected, self._session_timeout)
+            self._servers, callback, self._session_timeout)
 
         return d
 
@@ -211,11 +242,9 @@ class ZookeeperClient(object):
                 return d.errback(error)
             d.callback(path)
 
-        def _zk_cb_created(handle, result_code, path):
-            reactor.callFromThread(_cb_created, result_code, path)
-
+        callback = self._zk_thread_callback(_cb_created)
         result = zookeeper.acreate(
-            self.handle, path, data, acls, flags, _zk_cb_created)
+            self.handle, path, data, acls, flags, callback)
         self._check_result(result)
         return d
 
@@ -238,10 +267,8 @@ class ZookeeperClient(object):
                 return d.errback(error)
             d.callback(result_code)
 
-        def _zk_cb_delete(handle, result_code):
-            reactor.callFromThread(_cb_delete, result_code)
-
-        result = zookeeper.adelete(self.handle, path, version, _zk_cb_delete)
+        callback = self._zk_thread_callback(_cb_delete)
+        result = zookeeper.adelete(self.handle, path, version, callback)
         self._check_result(result)
         return d
 
@@ -264,12 +291,10 @@ class ZookeeperClient(object):
                 return d.errback(error)
             d.callback(stat)
 
-        def _zk_cb_exists(handle, result_code, stat):
-            reactor.callFromThread(_cb_exists, result_code, stat)
-
+        callback = self._zk_thread_callback(_cb_exists)
         watcher = self._wrap_watcher(watcher)
 
-        result = zookeeper.aexists(self.handle, path, watcher, _zk_cb_exists)
+        result = zookeeper.aexists(self.handle, path, watcher, callback)
         self._check_result(result)
         return d
 
@@ -291,11 +316,9 @@ class ZookeeperClient(object):
                 return d.errback(error)
             d.callback((value, stat))
 
-        def _zk_cb_get(handle, result_code, value, stat):
-            reactor.callFromThread(_cb_get, result_code, value, stat)
-
+        callback = self._zk_thread_callback(_cb_get)
         watcher = self._wrap_watcher(watcher)
-        result = zookeeper.aget(self.handle, path, watcher, _zk_cb_get)
+        result = zookeeper.aget(self.handle, path, watcher, callback)
         self._check_result(result)
         return d
 
@@ -315,12 +338,10 @@ class ZookeeperClient(object):
                 return d.errback(error)
             d.callback(children)
 
-        def _zk_cb_get_children(result_code, *args):
-            reactor.callFromThread(_cb_get_children, result_code, *args)
-
+        callback = self._zk_thread_callback(_cb_get_children, no_handle=True)
         watcher = self._wrap_watcher(watcher)
         result = zookeeper.aget_children(
-            self.handle, path, watcher, _zk_cb_get_children)
+            self.handle, path, watcher, callback)
         self._check_result(result)
         return d
 
@@ -340,10 +361,8 @@ class ZookeeperClient(object):
                 return d.errback(error)
             d.callback((acls, stat))
 
-        def _zk_cb_get_children(handle, result_code, acls, stat):
-            reactor.callFromThread(_cb_get_acl, result_code, acls, stat)
-
-        result = zookeeper.aget_acl(self.handle, path, _zk_cb_get_children)
+        callback = self._zk_thread_callback(_cb_get_acl)
+        result = zookeeper.aget_acl(self.handle, path, callback)
         self._check_result(result)
         return d
 
@@ -379,11 +398,9 @@ class ZookeeperClient(object):
                 return d.errback(error)
             d.callback(args)
 
-        def _zk_cb_get_children(result_code, *args):
-            reactor.callFromThread(_cb_set_acl, result_code, *args)
-
+        callback = self._zk_thread_callback(_cb_set_acl, no_handle=True)
         result = zookeeper.aset_acl(
-            self.handle, path, version, acls, _zk_cb_get_children)
+            self.handle, path, version, acls, callback)
         self._check_result(result)
         return d
 
@@ -407,16 +424,15 @@ class ZookeeperClient(object):
                 return d.errback(error)
             d.callback(node_stat)
 
-        def _zk_cb_set(handle, result_code, node_stat):
-            reactor.callFromThread(_cb_set, result_code, node_stat)
-
-        result = zookeeper.aset(self.handle, path, data, version, _zk_cb_set)
+        callback = self._zk_thread_callback(_cb_set)
+        result = zookeeper.aset(self.handle, path, data, version, callback)
         self._check_result(result)
         return d
 
-    def set_watcher(self, watcher):
+    def set_connection_watcher(self, watcher):
         """
-        Sets a permanent global watcher.
+        Sets a permanent global watcher on the connection. This will get
+        notice of changes to the connection state.
 
         @param: watcher function
         """
@@ -438,9 +454,7 @@ class ZookeeperClient(object):
                 return d.errback(error)
             d.callback(path)
 
-        def _zk_cb_sync(handle, result_code, path):
-            reactor.callFromThread(_cb_sync, result_code, path)
-
-        result = zookeeper.async(self.handle, path, _zk_cb_sync)
+        callback = self._zk_thread_callback(_cb_sync)
+        result = zookeeper.async(self.handle, path, callback)
         self._check_result(result)
         return d

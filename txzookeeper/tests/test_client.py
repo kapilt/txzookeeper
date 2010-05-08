@@ -181,7 +181,7 @@ class ClientTests(ZookeeperTestCase):
         d = self.client.connect()
         watch_deferred = Deferred()
 
-        def node_watch(type, path):
+        def node_watch(type, state, path):
             watch_deferred.callback((type, path))
 
         def create_node(client):
@@ -285,7 +285,7 @@ class ClientTests(ZookeeperTestCase):
         node_path = "/animals"
         watcher_deferred = Deferred()
 
-        def node_watcher(event_type, path):
+        def node_watcher(event_type, state, path):
             watcher_deferred.callback((event_type, path))
 
         def create_container(path):
@@ -586,6 +586,32 @@ class ClientTests(ZookeeperTestCase):
         d.addCallback(verify_acl)
         return d
 
+    def test_get_acl_error(self):
+        """
+        On error the acl callback invokes the deferred errback with the
+        exception.
+        """
+        d = self.client.connect()
+
+        def create_node(client):
+            return client.create("/moose")
+
+        def get_acl(path):
+            mock_client = self.mocker.patch(self.client)
+            mock_client._check_result(ANY, True)
+            self.mocker.result(zookeeper.ZooKeeperException("foobar"))
+            self.mocker.replay()
+            return self.client.get_acl(path)
+
+        def verify_failure(failure):
+            self.assertTrue(
+                isinstance(failure.value, zookeeper.ZooKeeperException))
+
+        d.addCallback(create_node)
+        d.addCallback(get_acl)
+        d.addErrback(verify_failure)
+        return d
+
     def test_client_id(self):
         """
         The client exposes a client id which is useful when examining
@@ -620,11 +646,42 @@ class ClientTests(ZookeeperTestCase):
             return self.client.sync(path)
 
         def verify_sync(result):
-            pass
+            self.assertTrue(
+                zookeeper.exists(self.client.handle, "/abc"))
 
         d.addCallback(create_node)
         d.addCallback(client_sync)
         d.addCallback(verify_sync)
+        return d
+
+    def test_sync_error(self):
+        """
+        On error the sync callback returns a an exception/failure.
+        """
+
+        d = self.client.connect()
+
+        def create_node(client):
+            return client.create("/abc")
+
+        def client_sync(path):
+            mock_client = self.mocker.patch(self.client)
+            mock_client._check_result(ANY, True)
+            self.mocker.result(zookeeper.ZooKeeperException("foobar"))
+            self.mocker.replay()
+            return self.client.sync(path)
+
+        def verify_failure(failure):
+            self.assertTrue(
+                isinstance(failure.value, zookeeper.ZooKeeperException))
+
+        def assert_failed(extra):
+            self.fail("Should have gone to errback")
+
+        d.addCallback(create_node)
+        d.addCallback(client_sync)
+        d.addCallback(assert_failed)
+        d.addErrback(verify_failure)
         return d
 
     def test_property_servers(self):
@@ -672,7 +729,7 @@ class ClientTests(ZookeeperTestCase):
         d = self.client.connect()
 
         def set_invalid_watcher(client):
-            return client.set_watcher(1)
+            return client.set_connection_watcher(1)
 
         def verify_invalid(failure):
             self.assertEqual(failure.value.args, ("invalid watcher",))
@@ -728,10 +785,12 @@ class ClientTests(ZookeeperTestCase):
         d.addCallback(verify_failure)
         return d
 
-    def test_global_watcher(self):
+    def test_connection_watcher(self):
         """
-        A global watcher can be set that recieves notices on all
-        changes of nodes touched by the handle.
+        A connection watcher can be set that recieves notices on when the
+        connection state changes. Technically zookeeper would also use this as
+        a global watcher for node state changes, but zkpython doesn't expose
+        that api, as its mostly considered legacy.
         """
         d = self.client.connect()
 
@@ -743,34 +802,23 @@ class ClientTests(ZookeeperTestCase):
             observed.append(args)
 
         def set_global_watcher(client):
-            client.set_watcher(watch)
+            client.set_connection_watcher(watch)
             return client
 
-        def create_node(client):
-            return client.create("/planets", "system")
-
-        def get_children(path):
-            return self.client.get_children(path)
-
-        def new_connection(extra):
-            self.client2 = ZookeeperClient("127.0.0.1:2181")
-            return self.client2.connect()
-
-        def create_child(client):
-            return self.client2.create("/planets/mars", "hot")
-
-        def modify_node(path):
-            return self.client2.set("/planets", "earth's solar system")
+        def close_connection(client):
+            return client.close()
 
         def verify_observed(stat):
-            print "observed", len(observed)
+            self.assertFalse(observed)
 
         d.addCallback(set_global_watcher)
-        d.addCallback(create_node)
-        d.addCallback(get_children)
-        d.addCallback(new_connection)
-        d.addCallback(create_child)
-        d.addCallback(modify_node)
+        d.addCallback(close_connection)
         d.addCallback(verify_observed)
 
         return d
+
+    def test_close_not_connected(self):
+        """
+        If the client is not connected, closing returns None.
+        """
+        self.assertEqual(self.client.close(), None)
