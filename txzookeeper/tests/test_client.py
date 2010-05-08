@@ -172,6 +172,27 @@ class ClientTests(ZookeeperTestCase):
         d.addCallback(verify_contents)
         return d
 
+    def test_get_with_error(self):
+        """
+        On get error the deferred's errback is raised.
+        """
+        d = self.client.connect()
+
+        def get_contents(client):
+            return client.get("/foobar-transient")
+
+        def verify_failure(failure):
+            self.assertTrue(
+                isinstance(failure.value, zookeeper.NoNodeException))
+
+        def assert_failure(extra):
+            self.fail("get should have failed")
+
+        d.addCallback(get_contents)
+        d.addCallback(verify_failure)
+        d.addErrback(verify_failure)
+        return d
+
     def test_get_with_watcher(self):
         """
         The client can specify a callable watcher when invoking get. The
@@ -260,6 +281,27 @@ class ClientTests(ZookeeperTestCase):
         d.addCallback(verify_exists)
         return d
 
+    def test_exists_with_error(self):
+        """
+        On error exists invokes the errback with the exception.
+        """
+        d = self.client.connect()
+
+        def check_exists(client):
+            mock_client = self.mocker.patch(client)
+            mock_client._check_result(
+                ANY, True, extra_codes=(zookeeper.NONODE,))
+            self.mocker.result(SyntaxError())
+            self.mocker.replay()
+            return client.exists("/zebra-moon")
+
+        def verify_failure(failure):
+            self.assertTrue(isinstance(failure.value, SyntaxError))
+
+        d.addCallback(check_exists)
+        d.addErrback(verify_failure)
+        return d
+
     def test_exists_with_nonexistant(self):
         """
         The exists method returns None when the value node doesn't exist.
@@ -324,6 +366,27 @@ class ClientTests(ZookeeperTestCase):
         """
         The client can create a monotonically increasing sequence nodes.
         """
+        d = self.client.connect()
+
+        def create_node(client):
+            return self.client.create("/seq-a")
+
+        def create_seq_node(path):
+            return self.client.create(
+                "/seq-a/seq-", flags=zookeeper.EPHEMERAL|zookeeper.SEQUENCE)
+
+        def get_children(path):
+            return self.client.get_children("/seq-a")
+
+        def verify_children(children):
+            self.assertEqual(children, ["seq-0000000000", "seq-0000000001"])
+
+        d.addCallback(create_node)
+        d.addCallback(create_seq_node)
+        d.addCallback(create_seq_node)
+        d.addCallback(get_children)
+        d.addCallback(verify_children)
+        return d
 
     def test_create_duplicate_node(self):
         """
@@ -439,11 +502,52 @@ class ClientTests(ZookeeperTestCase):
         d.addCallback(verify_children)
         return d
 
+    def test_get_children_with_error(self):
+        d = self.client.connect()
+
+        def get_children(client):
+            mock_client = self.mocker.patch(self.client)
+            mock_client._check_result(ANY, True)
+            self.mocker.result(SyntaxError())
+            self.mocker.replay()
+            return client.get_children("/tower")
+
+        def verify_failure(failure):
+            self.assertTrue(isinstance(failure.value, SyntaxError))
+
+        d.addCallback(get_children)
+        d.addErrback(verify_failure)
+        return d
+
     def test_get_children_with_watch(self):
         """
         The get_children method optionally takes a watcher callable which will
         be notified when the node is modified, or a child deleted or added.
         """
+        d = self.client.connect()
+
+        observed = []
+
+        def watch_children(*args):
+            observed.append(args)
+
+        def create_node(client):
+            return client.create("/jupiter")
+
+        def get_children(path):
+            return self.client.get_children(path, watch_children)
+
+        def new_connection(children):
+            self.client2 = ZookeeperClient("127.0.0.1:2181")
+            return self.client2.connect()
+
+        def create_child(client):
+            return client.create("/jupiter/io")
+
+        def verify_observed(path):
+            self.assertTrue(observed)
+
+        return d
 
     def test_get_no_children(self):
         """
@@ -537,6 +641,28 @@ class ClientTests(ZookeeperTestCase):
 
         return d
 
+    def xtest_add_auth_error(self):
+        """
+        On add_auth error the deferred errback is invoked with the exception.
+        """
+        d = self.client.connect()
+
+        def add_auth(client):
+            mock_client = self.mocker.patch(client)
+            mock_client._check_result(ANY, True)
+            self.mocker.result(zookeeper.AuthFailedException())
+            self.mocker.replay()
+            d = self.client.add_auth("digest", "mary:lamb")
+            return d
+
+        def verify_failure(failure):
+            self.assertTrue(
+                isinstance(failure.value, zookeeper.AuthFailedException))
+
+        d.addCallback(add_auth)
+        d.addErrback(verify_failure)
+        return d
+
     def test_set_acl(self):
         """
         The client can be used to set an ACL on a node.
@@ -565,11 +691,33 @@ class ClientTests(ZookeeperTestCase):
         d.addCallback(verify_acl)
         return d
 
+    def test_set_acl_with_error(self):
+        """
+        on error set_acl invokes the deferred's errback with an exception.
+        """
+        d = self.client.connect()
+
+        acl = dict(scheme="digest", id="a:b", perms=zookeeper.PERM_ALL)
+
+        def set_acl(client):
+            mock_client = self.mocker.patch(client)
+            mock_client._check_result(ANY, True)
+            self.mocker.result(zookeeper.NoNodeException())
+            self.mocker.replay()
+            return client.set_acl("/zebra-moon22", [acl])
+
+        def verify_failure(failure):
+            self.assertTrue(
+                isinstance(failure.value, zookeeper.NoNodeException))
+
+        d.addCallback(set_acl)
+        d.addErrback(verify_failure)
+        return d
+
     def test_get_acl(self):
         """
         The client can be used to get an ACL on a node.
         """
-
         d = self.client.connect()
 
         def create_node(client):
@@ -617,7 +765,6 @@ class ClientTests(ZookeeperTestCase):
         The client exposes a client id which is useful when examining
         the server logs.
         """
-
         # if we're not connected returns none
         self.assertEqual(self.client.client_id, None)
         d = self.client.connect()
@@ -658,7 +805,6 @@ class ClientTests(ZookeeperTestCase):
         """
         On error the sync callback returns a an exception/failure.
         """
-
         d = self.client.connect()
 
         def create_node(client):
@@ -699,6 +845,10 @@ class ClientTests(ZookeeperTestCase):
         return d
 
     def test_property_session_timeout(self):
+        """
+        The negotiated session timeout is available as a property on the
+        client. If the client isn't connected, the value is None.
+        """
         self.assertEqual(self.client.session_timeout, None)
         d = self.client.connect()
 
@@ -737,6 +887,32 @@ class ClientTests(ZookeeperTestCase):
 
         d.addCallback(set_invalid_watcher)
         d.addErrback(verify_invalid)
+        return d
+
+    def test_connect_with_server(self):
+        """
+        A client's servers can be specified in the connect method.
+        """
+        d = self.client.connect("127.0.0.1:2181")
+
+        def verify_connected(client):
+            self.assertTrue(client.connected)
+
+        d.addCallback(verify_connected)
+        return d
+
+    def xtest_connect_timeout(self):
+        """
+        A timeout in seconds can be specified on connect, if the client hasn't
+        connected before then, then an errback is invoked with a timeout
+        exception.
+        """
+        d = self.client.connect(timeout=0)
+
+        def verify_timeout(failure):
+            return
+        d.addErrback(d)
+
         return d
 
     def test_connect_ensured(self):

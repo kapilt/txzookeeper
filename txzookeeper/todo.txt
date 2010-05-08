@@ -9,6 +9,11 @@ acls
 proper exception mapping
 
 
+-----
+
+bug upstream
+
+ - you can set acl on a non existant node.
 
 
 

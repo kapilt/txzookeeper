@@ -89,6 +89,11 @@ class ZookeeperClient(object):
         return self._zk_thread_callback(watcher)
 
     def _zk_thread_callback(self, func, no_handle=False):
+        """
+        The client library invokes callbacks in a separate thread, we wrap
+        any user defined callback so that they are called back in the main
+        thread after, zookeeper calls the wrapper.
+        """
 
         def wrapper(handle, *args): # pragma: no cover
             if no_handle:
@@ -155,7 +160,7 @@ class ZookeeperClient(object):
         d = defer.Deferred()
 
         def _cb_authenticated(result_code):
-            error = self._check_result(result_code, callback=True)
+            error = self._check_result(result_code, True)
             if error:
                 return d.errback(error)
             d.callback(self)
