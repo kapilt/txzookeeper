@@ -8,7 +8,7 @@ from mocker import ANY
 
 from twisted.internet.defer import Deferred
 
-from txzookeeper.tests import ZookeeperTestCase
+from txzookeeper.tests import ZookeeperTestCase, utils
 from txzookeeper.client import (
     ZookeeperClient, ZOO_OPEN_ACL_UNSAFE, ConnectionTimeoutException,
     ConnectionException)
@@ -25,26 +25,12 @@ class ClientTests(ZookeeperTestCase):
 
     def tearDown(self):
         if self.client.connected:
-            self._deleteTree(handle=self.client.handle)
+            utils.deleteTree(handle=self.client.handle)
             self.client.close()
         del self.client
         if self.client2 and self.client2.connected:
             self.client2.close()
         super(ClientTests, self).tearDown()
-
-    def _deleteTree(self, path="/", handle=1):
-        """
-        Destroy all the nodes in zookeeper.
-        """
-        for child in zookeeper.get_children(handle, path):
-            if child == "zookeeper": # skip the metadata node
-                continue
-            child_path = "/"+("%s/%s"%(path, child)).strip("/")
-            try:
-                self._deleteTree(child_path, handle)
-                zookeeper.delete(handle, child_path, -1)
-            except zookeeper.ZooKeeperException, e:
-                print "Error on path", child_path, e
 
     def test_connect(self):
         """
