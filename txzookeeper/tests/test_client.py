@@ -231,6 +231,43 @@ class ClientTests(ZookeeperTestCase):
         d.addCallback(verify_watch)
         return d
 
+    def test_get_with_watcher_and_delete(self):
+        """
+        The client can specify a callable watcher when invoking get. The
+        watcher will be called back when the client path is modified in
+        another session.
+        """
+        d = self.client.connect()
+        watch_deferred = Deferred()
+
+        def node_watch(type, state, path):
+            watch_deferred.callback((type, path))
+
+        def create_node(client):
+            return self.client.create("/foobar-watched", "rabbit")
+
+        def get_node(path):
+            return self.client.get(path, node_watch)
+
+        def new_connection(data):
+            self.client2 = ZookeeperClient("127.0.0.1:2181")
+            return self.client2.connect()
+
+        def trigger_watch(client):
+            zookeeper.delete(self.client2.handle, "/foobar-watched")
+            return watch_deferred
+
+        def verify_watch((event_type, path)):
+            self.assertEqual(path, "/foobar-watched")
+            self.assertEqual(event_type, zookeeper.DELETED_EVENT)
+
+        d.addCallback(create_node)
+        d.addCallback(get_node)
+        d.addCallback(new_connection)
+        d.addCallback(trigger_watch)
+        d.addCallback(verify_watch)
+        return d
+
     def test_delete(self):
         """
         The client can delete a node via its delete method.
@@ -521,7 +558,7 @@ class ClientTests(ZookeeperTestCase):
         return d
 
     # seems to be a segfault on this one.
-    def xtest_get_children_with_watch(self):
+    def test_get_children_with_watch(self):
         """
         The get_children method optionally takes a watcher callable which will
         be notified when the node is modified, or a child deleted or added.
@@ -549,7 +586,6 @@ class ClientTests(ZookeeperTestCase):
             return watch_deferred
 
         def verify_observed(data):
-            print "Verify", data
             self.assertTrue(data)
 
         d.addCallback(create_node)
