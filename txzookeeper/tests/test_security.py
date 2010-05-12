@@ -26,7 +26,7 @@ class SecurityTests(ZookeeperTestCase):
         self.clients = []
 
         self.test_cleanup_connection = ZookeeperClient("127.0.0.1:2181", 2000)
-        self.test_cleanup_access_control = self.make_ac(
+        self.access_control_test_cleanup_entry = self.make_ac(
             self.ident_unittest, all=True, admin=True)
         return self.open_and_authenticate(
             self.test_cleanup_connection, self.ident_unittest)
@@ -75,12 +75,24 @@ class SecurityTests(ZookeeperTestCase):
             return
         self.fail("should have raised auth exception")
 
-    def make_acl(self, *ac):
-        ac = list(ac)
-        ac.append(self.test_cleanup_access_control)
-        return ac
+    def make_acl(self, *access_control_entries):
+        """
+        Take the variable number of access control entries and return a
+        list suitable for passing to the txzookeeper's api as an ACL.
+
+        Also automatically appends the test acess control entry to ensure
+        that the test can cleanup regardless of node permissions set within
+        a test.
+        """
+        access_control_list = list(access_control_entries)
+        access_control_list.append(self.access_control_test_cleanup_entry)
+        return access_control_list
 
     def make_ac(self, credentials, **kw):
+        """
+        Given a username:password credential and boolean keyword arguments
+        corresponding to permissions.
+        """
         user, password = credentials.split(":")
         identity = "%s:%s" % (
             user,
@@ -103,8 +115,9 @@ class SecurityTests(ZookeeperTestCase):
                 permissions = permissions | perm
         if permissions is None:
             raise SyntaxError("No permissions specified")
-        acl = {'id': identity, 'scheme': 'digest', 'perms': permissions}
-        return acl
+        access_control_entry = {
+            'id': identity, 'scheme': 'digest', 'perms': permissions}
+        return access_control_entry
 
     @inlineCallbacks
     def test_bob_message_for_alice_with_eve_reading(self):
