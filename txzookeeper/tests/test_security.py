@@ -131,12 +131,12 @@ class SecurityTests(ZookeeperTestCase):
     @inlineCallbacks
     def test_alice_message_box_for_bob_with_eve_deleting(self):
         """
-        If alice makes a folder to drop off messages to bob,
-        neither bob nor eve can write to it, and bob can only
-        read, and delete the messages. The permission for deleting
-        is set on the container node. Even if eve has permission
-        to delete the message node, without the container permission
-        it will not succeed.
+        If alice makes a folder to drop off messages to bob, neither bob nor
+        eve can write to it, and bob can only read, and delete the messages.
+        The permission for deleting is set on the container node. Bob has
+        delete permission only on the on the container, and can delete nodes.
+        Even if eve has permission to delete on the message node, without the
+        container permission it will not succeed.
         """
         bob, alice, eve = yield self.connect_users("bob", "alice", "eve")
 
@@ -182,13 +182,15 @@ class SecurityTests(ZookeeperTestCase):
     def test_eve_can_discover_node_path(self):
         """
         One weakness of the zookeeper security model, is that it enables
-        discovery of a node existance and its acl to any inquiring party.
+        discovery of a node existance, its node stats, and its acl to
+        any inquiring party.
+
         The acl is read off the node and then used as enforcement to any
         policy. Ideally it should validate exists and get_acl against
         the read permission on the node.
 
         Here bob creates a node that only he can read or write to, but
-        eve can still infer the nodes existance.
+        eve can still get node stat on the node if she knows the path.
         """
         bob, eve = yield self.connect_users("bob", "eve")
         yield bob.create("/bobsafeplace", "",
@@ -218,7 +220,8 @@ class SecurityTests(ZookeeperTestCase):
         the read permission on the node.
 
         Here bob creates a node that only he can read or write to, but
-        eve can still infer the nodes existance. and reads its acl.
+        eve can still get node stat and acl information on the node if
+        she knows the path.
         """
         bob, eve = yield self.connect_users("bob", "eve")
         yield bob.create("/bobsafeplace", "",
@@ -233,6 +236,6 @@ class SecurityTests(ZookeeperTestCase):
         def verify_node_stat_and_acl((acl, node_stat)):
             self.assertEqual(node_stat["dataLength"], len("supersecret"))
             self.assertEqual(node_stat["version"], 0)
-
+            self.assertEqual(acl[0]["id"].split(":")[0], "bob")
         d.addCallback(verify_node_stat_and_acl)
         yield d
