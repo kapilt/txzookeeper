@@ -91,7 +91,7 @@ class SecurityTests(ZookeeperTestCase):
     def make_ac(self, credentials, **kw):
         """
         Given a username:password credential and boolean keyword arguments
-        corresponding to permissions.
+        corresponding to permissions construct an access control entry.
         """
         user, password = credentials.split(":")
         identity = "%s:%s" % (
