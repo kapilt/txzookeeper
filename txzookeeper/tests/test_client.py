@@ -604,18 +604,15 @@ class ClientTests(ZookeeperTestCase):
 
     def test_get_children_nonexistant(self):
         """
-        Getting children of a nonexistant node also returns an empty list
+        Getting children of a nonexistant node raises a no node exception.
         """
         d = self.client.connect()
 
         def get_children(client):
             return client.get_children("/tower")
 
-        def verify_children(children):
-            self.assertEqual(children, [])
-
         d.addCallback(get_children)
-        d.addCallback(verify_children)
+        self.failUnlessFailure(d, zookeeper.NoNodeException)
         return d
 
     def test_add_auth(self):
@@ -638,7 +635,7 @@ class ClientTests(ZookeeperTestCase):
             d = client.add_auth("digest", "bob:martini")
             # a little hack to avoid slowness around adding auth
             # see https://issues.apache.org/jira/browse/ZOOKEEPER-770
-            client.get_children("/orchard")
+            client.exists("/orchard")
             return d
 
         def create_node(client):
