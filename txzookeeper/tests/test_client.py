@@ -604,7 +604,7 @@ class ClientTests(ZookeeperTestCase):
 
     def test_get_children_nonexistant(self):
         """
-        Getting children of a nonexistant node also returns an empty list.
+        Getting children of a nonexistant node raises a no node exception.
         """
         d = self.client.connect()
 
