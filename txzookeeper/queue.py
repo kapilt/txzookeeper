@@ -7,8 +7,12 @@ processors, trying to fetch items.
 """
 
 from Queue import Empty
+
 import zookeeper
+
+from twisted.internet.defer import inlineCallbacks, returnValue
 from twisted.python.failure import Failure
+
 from client import ZOO_OPEN_ACL_UNSAFE
 
 
@@ -25,7 +29,8 @@ class Queue(object):
 
     def _on_queue_items_changed(self, event, state, path):
         self._child_watch = False
-        self._refill()
+        if self.client.connected:
+            self._refill()
 
     def _refill(self):
         """
@@ -70,9 +75,14 @@ class Queue(object):
         d.addCallback(on_success)
         return d
 
-    def get_nowait(self):
+    @inlineCallbacks
+    def get(self):
+        """
+        Get and remove an item from the queue.
+        """
         if not self._cached_entries:
-            self._refill()
+            yield self._refill()
+
         if not self._cached_entries:
             raise Empty(self.path)
 
@@ -81,13 +91,13 @@ class Queue(object):
 
         def on_no_node_error(failure):
             if isinstance(failure.value, zookeeper.NoNodeException):
-                return self.get_nowait()
+                return self.get()
             return failure
 
         def on_success_remove(data):
             d = self.client.delete("/".join((self.path, name)))
 
-            def on_success(data):
+            def on_success(delete_result):
                 return data
 
             d.addCallback(on_success)
@@ -96,9 +106,10 @@ class Queue(object):
 
         d.addCallback(on_success_remove)
         d.addErrback(on_no_node_error)
-        return d
+        data = yield d
+        returnValue(data)
 
-    def put_nowait(self, item):
+    def put(self, item):
         d = self.client.create(
             "/".join((self.path, self.prefix)), item,
             self._acl, zookeeper.EPHEMERAL|zookeeper.SEQUENCE)
