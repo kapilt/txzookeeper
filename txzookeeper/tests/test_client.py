@@ -1053,7 +1053,6 @@ class ClientTests(ZookeeperTestCase):
         d = self.client.connect()
 
         observed = []
-        zookeeper.set_debug_level(zookeeper.LOG_LEVEL_DEBUG)
 
         def watch(*args):
             observed.append(args)
