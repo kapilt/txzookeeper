@@ -1,7 +1,11 @@
+
+import zookeeper
+
+from twisted.internet.defer import inlineCallbacks, returnValue
+
 from txzookeeper import ZookeeperClient
 from txzookeeper.lock import Lock
 from txzookeeper.tests import ZookeeperTestCase, utils
-from twisted.internet.defer import inlineCallbacks, returnValue, DeferredList
 
 
 class LockTests(ZookeeperTestCase):
@@ -20,9 +24,10 @@ class LockTests(ZookeeperTestCase):
 
     @inlineCallbacks
     def open_client(self, credentials=None):
-        """authentication so the test always has access to clean up the
-        zookeeper node tree. synchronous auth to avoid using deferred
-        during setup."""
+        """
+        Open a zookeeper client, optionally authenticating with the
+        credentials if given.
+        """
         client = ZookeeperClient("127.0.0.1:2181")
         self.clients.append(client)
         yield client.connect()
@@ -36,89 +41,110 @@ class LockTests(ZookeeperTestCase):
     @inlineCallbacks
     def test_acquire_release(self):
         """
+        A lock can be acquired and released.
         """
         client = yield self.open_client()
-        self.assertTrue(client.connected)
         path = yield client.create("/lock-test")
-        exists = yield client.exists(path)
-        self.assertTrue(exists)
-
         lock = Lock(path, client)
-        self.assertTrue(client.connected)
-        lock = yield lock.acquire()
+        yield lock.acquire()
         self.assertEqual(lock.locked, True)
         released = yield lock.release()
         self.assertEqual(released, True)
 
     @inlineCallbacks
-    def test_multi_client_acquire_release(self):
-
+    def test_lock_reuse(self):
+        """
+        A lock instance may be reused after an acquire/release cycle.
+        """
         client = yield self.open_client()
-        path = yield client.create("/parallel-lock-test")
+        path = yield client.create("/lock-test")
+        lock = Lock(path, client)
+        yield lock.acquire()
+        self.assertTrue(lock.locked)
+        yield lock.release()
+        self.assertFalse(lock.locked)
+        yield lock.acquire()
+        self.assertTrue(lock.locked)
+        yield lock.release()
+        self.assertFalse(lock.locked)
 
-        results = []
-        defers = []
-        for i in range(1):
-            client = yield self.open_client()
-            lock = Lock(path, client, i)
-            d = lock.acquire()
+    @inlineCallbacks
+    def test_error_on_double_acquire(self):
+        """
+        Attempting to acquire an already held lock, raises a Value Error.
+        """
+        client = yield self.open_client()
+        path = yield client.create("/lock-test")
+        lock = Lock(path, client)
+        yield lock.acquire()
+        self.assertEqual(lock.locked, True)
+        self.assertRaises(ValueError, lock.acquire)
 
-            def release(lock):
-                results.append(i)
-                lock.release()
+    @inlineCallbacks
+    def test_error_on_acquire_while_acquiring(self):
+        """
+        If a lock instance is already attempting to acquire the lock,
+        then trying to reacquire it is an error.
+        """
+        client = yield self.open_client()
+        lock_dir = yield client.create("/lock-test")
+        lock = Lock(lock_dir, client)
 
-            d.addCallback(release)
-            defers.append(d)
+        # create a fake candidate so the lock can't acquire.
+        yield client.create(
+            "/lock-test/%s"%(lock.prefix),
+            flags=zookeeper.EPHEMERAL|zookeeper.SEQUENCE)
+        children = yield client.get_children("/lock-test")
+        self.assertTrue(len(children))
 
-        for i in defers:
-            yield i
+        # this won't ever acquire because of the above node
+        # but we need to give it a moment to attempt it.
+        d = lock.acquire()
+        from twisted.internet import reactor
 
-        print results
+        def verify_acquire_while_acquiring():
+            self.assertRaises(ValueError, lock.acquire)
+            # stop the attempt to acquire the lock, fires
+            # an error on the lock acquire deferred.
+            return lock.release(acquiring=True)
 
-        #     def create_acquire_lock(client):
-        #         lock = Lock(path, client, i)
-        #         return lock.acquire()
+        reactor.callLater(0.1, verify_acquire_while_acquiring)
 
-        #     def release_lock(lock):
-        #         print "acquired", i
-        #         self.assertTrue(lock.locked)
-        #         results.append(i)
-        #         return lock.release()
+        self.failUnlessFailure(d, ValueError)
+        yield d
 
-        #     def verify_released(value):
-        #         print "released", i
-        #         self.assertTrue(value)
+    @inlineCallbacks
+    def test_error_when_releasing_unacquired(self):
+        """
+        If an attempt is made to release a lock, that not currently being held,
+        than exception is raised.
+        """
+        client = yield self.open_client()
+        lock_dir = yield client.create("/lock-multi-test")
+        lock = Lock(lock_dir, client)
+        self.assertRaises(ValueError, lock.release)
 
-        #     d.addCallback(create_acquire_lock)
-        #     d.addCallback(release_lock)
-        #     d.addCallback(verify_released)
-        #     defers.append(d)
+    @inlineCallbacks
+    def test_multiple_acquiring_clients(self):
+        client = yield self.open_client()
+        client2 = yield self.open_client()
+        lock_dir = yield client.create("/lock-multi-test")
 
-        # dlist = DeferredList(defers, fireOnOneErrback=1)
-        # yield dlist
-        # self.assertEqual(results, [0,1,2,3])
+        lock = Lock(lock_dir, client)
+        lock2 = Lock(lock_dir, client2)
 
-        #     d = self.open_client()
-            
-        #     def create_acquire_lock(client):
-        #         lock = Lock(path, client, i)
-        #         return lock.acquire()
+        yield lock.acquire()
+        self.assertTrue(lock.locked)
 
-        #     def release_lock(lock):
-        #         print "acquired", i
-        #         self.assertTrue(lock.locked)
-        #         results.append(i)
-        #         return lock.release()
+        lock2_acquire = lock2.acquire()
 
-        #     def verify_released(value):
-        #         print "released", i
-        #         self.assertTrue(value)
+        from twisted.internet import reactor
 
-        #     d.addCallback(create_acquire_lock)
-        #     d.addCallback(release_lock)
-        #     d.addCallback(verify_released)
-        #     defers.append(d)
+        def release_lock():
+            return lock.release()
 
-        # dlist = DeferredList(defers, fireOnOneErrback=1)
-        # yield dlist
-        # self.assertEqual(results, [0,1,2,3])
+        reactor.callLater(0.1, release_lock)
+
+        yield lock2_acquire
+        self.assertTrue(lock2.locked)
+        self.assertFalse(lock.locked)
