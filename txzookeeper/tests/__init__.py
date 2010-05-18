@@ -25,3 +25,16 @@ class ZookeeperTestCase(TestCase, MockerTestCase):
 
     def get_log(self):
         return open(self.log_file_path).read()
+
+
+def egg_test_runner():
+    """
+    Test collector and runner for setup.py test
+    """
+    from twisted.scripts.trial import run
+    original_args = list(sys.argv)
+    sys.argv = ["", "txzookeeper"]
+    try:
+        return run()
+    finally:
+        sys.argv = original_args
