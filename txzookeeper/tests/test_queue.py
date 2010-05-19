@@ -8,10 +8,10 @@ from txzookeeper.queue import Queue, Empty
 from txzookeeper.tests import ZookeeperTestCase, utils
 
 
-class LockTests(ZookeeperTestCase):
+class QueueTests(ZookeeperTestCase):
 
     def setUp(self):
-        super(LockTests, self).setUp()
+        super(QueueTests, self).setUp()
         self.clients = []
 
     def tearDown(self):
@@ -82,7 +82,8 @@ class LockTests(ZookeeperTestCase):
         test_client = yield self.open_client()
         path = yield test_client.create("/multi-prod-cons")
 
-        results = []
+        consume_results = []
+        produce_results = []
 
         @inlineCallbacks
         def producer(start, offset):
@@ -90,35 +91,34 @@ class LockTests(ZookeeperTestCase):
             q = Queue(path, client)
             for i in range(start, start+offset):
                 yield q.put(str(i))
+                produce_results.append(str(i))
 
         @inlineCallbacks
         def consumer(max):
             client = yield self.open_client()
             q = Queue(path, client)
-
-            for index in range(max):
+            attempts = range(max)
+            for el in attempts:
                 try:
                     value = yield q.get()
                 except Empty:
-                    returnValue(None)
-                except:
+                    returnValue("")
+                consume_results.append(value)
+            returnValue(True)
 
-                    import traceback
-                    print "failed"
-                    traceback.print_exc()
-                    yield client.sync()
-                    continue
-                results.append(value)
-
-
+        # two producers 20 items total
         yield DeferredList(
-            [producer(0, 10), producer(11, 10)])
-
+            [producer(0, 10), producer(10, 10)])
 
         children = yield test_client.get_children(path)
         self.assertEqual(len(children), 20)
 
         yield DeferredList(
-            [consumer(10)])
+            [consumer(10), consumer(10), consumer(10)])
 
-        self.assertEqual(len(results), 10)
+        yield DeferredList(
+            [consumer(5), consumer(5), consumer(5), consumer(6)])
+
+        err = set(produce_results)-set(consume_results)
+        self.assertFalse(err)
+        self.assertEqual(len(consume_results), len(produce_results))
