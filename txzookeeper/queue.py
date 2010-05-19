@@ -11,7 +11,6 @@ from Queue import Empty
 import zookeeper
 
 from twisted.internet.defer import inlineCallbacks, returnValue, Deferred
-from twisted.python.failure import Failure
 
 from client import ZOO_OPEN_ACL_UNSAFE
 
@@ -30,38 +29,54 @@ class Queue(object):
         self._cached_entries = []
         self._child_watch = False
 
-    def _refill(self):
+    def _refill(self, wait=False):
         """
         Refetch the queue children, setting a watch as needed, and invalidating
         any previous children entries queue.
         """
         d = None
 
-        def on_queue_items_changed(event, state, path):
+        child_available = Deferred()
+
+        def on_queue_items_changed(*args):
             """Event watcher on queue node child events."""
-            self._child_watch = False
+            if not self.client.connected:
+                return
+
+            # refill cache
             self._cached_entries = []
-            if self.client.connected:
-                self._refill()
+            d = self._refill()
+            if not wait:
+                return
+
+            # notify any waiting
+            def notify_waiting(value):
+                child_available.callback(None)
+            d.addCallback(notify_waiting)
 
         d = self.client.get_children(
             self.path, on_queue_items_changed)
 
-        self._child_watch = True
-
         def on_success(children):
-            self._cached_entries.extend(children)
+            self._cached_entries = children
             self._cached_entries.sort()
+
+            if not self._cached_entries:
+                #print "no cached entries"
+                if wait:
+                    #print "returning deferred", id(child_available)
+                    return child_available
 
         d.addCallback(on_success)
         return d
 
-    def _get(self, name):
+    def _get_item(self, name):
         d = self.client.get("/".join((self.path, name)))
 
         def on_success(data):
             # on nested _get calls we get back just the data
             # versus as a result of client.get.
+            #print "got data", data
             if not isinstance(data, tuple):
                 return data
             return data[0]
@@ -74,7 +89,7 @@ class Queue(object):
                 # tests. Instead we process our entire our node cache before
                 # proceeding.
                 if self._cached_entries:
-                    return self._get(self._cached_entries.pop())
+                    return self._get_item(self._cached_entries.pop())
 
                 # Rare in practice, but if the cache is empty, restart the get
                 return self.get() # pragma: no cover
@@ -85,20 +100,33 @@ class Queue(object):
         d.addCallback(on_success)
         return d
 
-    @inlineCallbacks
     def get(self):
         """
         Get and remove an item from the queue. If no item is available
         an Empty exception is raised.
         """
-        if not self._cached_entries:
-            yield self._refill()
+        return self._get()
 
+    def get_wait(self):
+        """
+        Get and remove an item from the queue. If no item is available
+        """
+        return self._get(wait=True)
+
+    @inlineCallbacks
+    def _get(self, wait=False):
+        """
+        Get and remove an item from the queue. If no item is available
+        an Empty exception is raised.
+        """
         if not self._cached_entries:
+            yield self._refill(wait=wait)
+
+        if not wait and not self._cached_entries:
             raise Empty()
 
         name = self._cached_entries.pop(0)
-        d = self._get(name)
+        d = self._get_item(name)
 
         def on_no_node_error(failure):
             if isinstance(failure.value, zookeeper.NoNodeException):
@@ -109,6 +137,7 @@ class Queue(object):
             d = self.client.delete("/".join((self.path, name)))
 
             def on_success(delete_result):
+                #print "return data"
                 return data
 
             d.addCallback(on_success)

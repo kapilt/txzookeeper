@@ -1,6 +1,4 @@
 
-import zookeeper
-
 from twisted.internet.defer import inlineCallbacks, returnValue, DeferredList
 
 from txzookeeper import ZookeeperClient
@@ -16,11 +14,14 @@ class QueueTests(ZookeeperTestCase):
 
     def tearDown(self):
         cleanup = False
+
         for client in self.clients:
             if not cleanup and client.connected:
                 utils.deleteTree(handle=client.handle)
                 cleanup = True
-            client.close()
+            if client.connected:
+                client.close()
+        super(QueueTests, self).tearDown()
 
     @inlineCallbacks
     def open_client(self, credentials=None):
@@ -39,21 +40,23 @@ class QueueTests(ZookeeperTestCase):
         returnValue(client)
 
     @inlineCallbacks
-    def test_put_get_item(self):
+    def test_put_get_nowait_item(self):
         """
+        We can put and get an item off the queue.
         """
         client = yield self.open_client()
         path = yield client.create("/queue-test")
         queue = Queue(path, client)
         item = "transform image bluemarble.jpg"
         yield queue.put(item)
-        item2 = yield queue.get()
+        item2 = yield queue.get_nowait()
         self.assertEqual(item, item2)
 
     @inlineCallbacks
-    def test_get_empty_queue(self):
+    def test_get_nowait_empty_queue(self):
         """
-        Fetching from an empty queue raises the Empty exception.
+        Fetching from an empty queue raises the Empty exception if
+        the client uses the the nowait api.
         """
         client = yield self.open_client()
         path = yield client.create("/queue-test")
@@ -75,6 +78,38 @@ class QueueTests(ZookeeperTestCase):
         children = yield client.get_children(path)
         self.assertEqual(len(children), 1)
         data, stat = yield client.get("/".join((path, children[0])))
+        self.assertEqual(data, item)
+
+    @inlineCallbacks
+    def test_get_with_wait(self):
+        """
+        Instead of getting an empty error, get can also be used
+        that returns a deferred that only is called back when an
+        item is ready in the queue.
+        """
+        client = yield self.open_client()
+        test_client = yield self.open_client()
+
+        path = yield client.create("/queue-wait-test")
+        item = "zebra moon"
+        queue = Queue(path, client)
+        d = queue.get_wait()
+
+        @inlineCallbacks
+        def push_item():
+            queue = Queue(path, test_client)
+            yield queue.put("zebra moon")
+
+        def verify_item_received(data):
+            self.assertEqual(data, item)
+            return data
+
+        d.addCallback(verify_item_received)
+
+        from twisted.internet import reactor
+        reactor.callLater(0.4, push_item)
+
+        data = yield d
         self.assertEqual(data, item)
 
     @inlineCallbacks

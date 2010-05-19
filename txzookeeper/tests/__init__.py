@@ -4,10 +4,6 @@ import sys
 from twisted.trial.unittest import TestCase
 from mocker import MockerTestCase
 
-#from txzookeeper.client import Wrapper
-
-#zookeeper = Wrapper(zookeeper)
-
 class ZookeeperTestCase(TestCase, MockerTestCase):
 
     def setUp(self):
