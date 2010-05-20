@@ -249,7 +249,7 @@ class QueueTests(ZookeeperTestCase):
             attempts = range(max)
             for el in attempts:
                 try:
-                    value = yield q.get()
+                    value = yield q.get_nowait()
                 except Empty:
                     returnValue("")
                 consume_results.append(value)

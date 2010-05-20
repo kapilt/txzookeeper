@@ -44,19 +44,19 @@ class Queue(object):
     def get(self):
         """
         Get and remove an item from the queue. If no item is available
-        an Empty exception is raised.
-        """
-        return self._get()
-
-    get_nowait = get
-
-    def get_wait(self):
-        """
-        Get and remove an item from the queue. If no item is available
         at the moment, a deferred is return that will fire when an item
         is available.
         """
         return self._get(wait=True)
+
+    get_wait = get
+
+    def get_nowait(self):
+        """
+        Get and remove an item from the queue. If no item is available
+        an Empty exception is raised.
+        """
+        return self._get()
 
     def put(self, item):
         """
