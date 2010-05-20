@@ -1,9 +1,22 @@
 """
+A distributed multiprocess queue.
 
-So there are some oddities to using zookeeper as a queue. If you have two queue
-processors, trying to fetch items.
+There are some things to keep in mind when using zookeeper as a queue
+compared to a dedicated messaging service. An error condition in a queue
+processor must requeue the item, else its lost, as its removed from
+zookeeper on retrieval in this implementation. This implementation more
+closely mirrors the behavior and api of standard library Queue, ableit
+with the caveat of only strings for queue items.
 
+Todo:
 
+ -implement Queue.join.
+ -implement Sized queues.
+ -message queue application as queue composite with dedicated processes.
+
+ - one failing of the current implementation, is if the queue itself is
+   transient, waiting gets won't ever be invoked if the queue is deleted.
+ 
 """
 
 from Queue import Empty
@@ -27,14 +40,61 @@ class Queue(object):
         self.persistent = persistent
         self._acl = list(acl)
         self._cached_entries = []
-        self._child_watch = False
+
+    def get(self):
+        """
+        Get and remove an item from the queue. If no item is available
+        an Empty exception is raised.
+        """
+        return self._get()
+
+    get_nowait = get
+
+    def get_wait(self):
+        """
+        Get and remove an item from the queue. If no item is available
+        at the moment, a deferred is return that will fire when an item
+        is available.
+        """
+        return self._get(wait=True)
+
+    def put(self, item):
+        """
+        Put an item into the queue.
+        """
+        if not isinstance(item, str):
+            raise ValueError("queue items must be strings")
+
+        flags = zookeeper.SEQUENCE
+        if not self.persistent:
+            flags = flags|zookeeper.EPHEMERAL
+
+        d = self.client.create(
+            "/".join((self.path, self.prefix)), item, self._acl, flags)
+        return d
+
+    def qsize(self):
+        """
+        Return the approximate size of the queue. This value is always
+        effectively a snapshot. Returns a deferred returning an integer.
+        """
+        d = self.client.exists(self.path)
+
+        def on_success(stat):
+            return stat["numChildren"]
+
+        d.addCallback(on_success)
+        return d
 
     def _refill(self, wait=False):
         """
         Refetch the queue children, setting a watch as needed, and invalidating
-        any previous children entries queue. If wait is True, then a deferred
-        is return if no items are available after the refill, which chains to
-        a watcher to trigger.
+        any previous children entries queue.
+
+        If wait is True, then a deferred is return if no items are available
+        after the refill, which chained to a watcher to trigger, and triggers
+        when the children of the queue have changed. If there are no children
+        available it will recurse.
         """
         d = None
 
@@ -67,13 +127,15 @@ class Queue(object):
                 if wait:
                     return child_available
 
-        def on_error(failure):
-            # if no children than our queue has been destroyed.
+        def on_error(failure): # pragma: no cover
+            # if no node error on get children than our queue has been
+            # destroyed or was never created.
             if isinstance(failure.value, zookeeper.NoNodeException):
                 if not self.client.connected:
                     return
                 raise zookeeper.NoNodeException(
-                    "Queue non existant %s"%self.path)
+                    "Queue node doesn't exist %s"%self.path)
+            return failure
 
         d.addCallback(on_success)
         d.addErrback(on_error)
@@ -106,34 +168,18 @@ class Queue(object):
                 # if the cache is empty, restart the get. Fairly rare.
                 return self._get(wait) # pragma: no cover
 
-            return failure
+            return failure # pragma: no cover
 
         d.addErrback(on_no_node)
         d.addCallback(on_success)
         return d
 
-    def get(self):
-        """
-        Get and remove an item from the queue. If no item is available
-        an Empty exception is raised.
-        """
-        return self._get()
-
-    get_nowait = get
-
-    def get_wait(self):
-        """
-        Get and remove an item from the queue. If no item is available
-        at the moment, a deferred is return that will fire when an item
-        is available.
-        """
-        return self._get(wait=True)
-
     @inlineCallbacks
     def _get(self, wait=False):
         """
         Get and remove an item from the queue. If no item is available
-        an Empty exception is raised.
+        an Empty exception is raised. If wait is True, a deferred
+        that fires only when an item has been retrieved is returned.
         """
         if not self._cached_entries:
             yield self._refill(wait=wait)
@@ -164,18 +210,3 @@ class Queue(object):
 
         data = yield d
         returnValue(data)
-
-    def put(self, item):
-        """
-        Put an item into the queue.
-        """
-        if not isinstance(item, str):
-            raise ValueError("queue items must be strings")
-
-        flags = zookeeper.SEQUENCE
-        if not self.persistent:
-            flags = flags|zookeeper.EPHEMERAL
-
-        d = self.client.create(
-            "/".join((self.path, self.prefix)), item, self._acl, flags)
-        return d

@@ -1,4 +1,5 @@
 
+from zookeeper import NoNodeException
 from twisted.internet.defer import (
     inlineCallbacks, returnValue, DeferredList, Deferred)
 
@@ -63,7 +64,7 @@ class QueueTests(ZookeeperTestCase):
         client = yield self.open_client()
         path = yield client.create("/queue-test")
         queue = Queue(path, client)
-        queue_get = queue.get()
+        queue_get = queue.get_nowait()
         yield self.failUnlessFailure(queue_get, Empty)
 
     @inlineCallbacks
@@ -81,6 +82,60 @@ class QueueTests(ZookeeperTestCase):
         self.assertEqual(len(children), 1)
         data, stat = yield client.get("/".join((path, children[0])))
         self.assertEqual(data, item)
+
+    @inlineCallbacks
+    def test_qsize(self):
+        """
+        The client implements a method which returns an unreliable
+        approximation of the number of items in the queue (mirrors api
+        of Queue.Queue), its unreliable only in that the value represents
+        a temporal snapshot of the value at the time it was requested,
+        not its current value.
+        """
+        client = yield self.open_client()
+        path = yield client.create("/test-qsize")
+        queue = Queue(path, client)
+
+        yield queue.put("abc")
+        size = yield queue.qsize()
+        self.assertTrue(size, 1)
+
+        yield queue.put("bcd")
+        size = yield queue.qsize()
+        self.assertTrue(size, 2)
+
+        yield queue.get()
+        size = yield queue.qsize()
+        self.assertTrue(size, 1)
+
+    @inlineCallbacks
+    def test_invalid_put_item(self):
+        """
+        The queue only accepts string items.
+        """
+        client = yield self.open_client()
+        queue = Queue("/unused", client)
+        self.assertRaises(ValueError, queue.put, 123)
+
+    @inlineCallbacks
+    def test_get_with_invalid_queue(self):
+        """
+        If the queue hasn't been created an unknown node exception is raised
+        on get.
+        """
+        client = yield self.open_client()
+        queue = Queue("/unused", client)
+        self.failUnlessFailure(queue.get(), NoNodeException)
+
+    @inlineCallbacks
+    def test_put_with_invalid_queue(self):
+        """
+        If the queue hasn't been created an unknown node exception is raised
+        on put.
+        """
+        client = yield self.open_client()
+        queue = Queue("/unused", client)
+        self.failUnlessFailure(queue.put("abc"), NoNodeException)
 
     @inlineCallbacks
     def test_get_with_wait(self):
@@ -154,12 +209,16 @@ class QueueTests(ZookeeperTestCase):
                     # as one of the producers will likely hang.
                     returnValue(len(results))
                 results.append((client.handle, data))
+
             returnValue(len(results))
 
         yield DeferredList(
             [DeferredList([consumer(3), consumer(2)], fireOnOneCallback=1),
              producer(6)])
-        self.assertEqual(len(results), 5)
+        # as soon as the producer and either consumer is complete than the test
+        # is done. Thus the only assertion we can make is the result is the
+        # size of at the small consumer.
+        self.assertTrue(len(results) >= 2)
 
     @inlineCallbacks
     def test_staged_multiproducer_multiconsumer(self):
