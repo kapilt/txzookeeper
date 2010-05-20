@@ -32,7 +32,9 @@ class Queue(object):
     def _refill(self, wait=False):
         """
         Refetch the queue children, setting a watch as needed, and invalidating
-        any previous children entries queue.
+        any previous children entries queue. If wait is True, then a deferred
+        is return if no items are available after the refill, which chains to
+        a watcher to trigger.
         """
         d = None
 
@@ -45,7 +47,7 @@ class Queue(object):
 
             # refill cache
             self._cached_entries = []
-            d = self._refill()
+            d = self._refill(wait=wait)
             if not wait:
                 return
 
@@ -62,21 +64,31 @@ class Queue(object):
             self._cached_entries.sort()
 
             if not self._cached_entries:
-                #print "no cached entries"
                 if wait:
-                    #print "returning deferred", id(child_available)
                     return child_available
 
+        def on_error(failure):
+            # if no children than our queue has been destroyed.
+            if isinstance(failure.value, zookeeper.NoNodeException):
+                if not self.client.connected:
+                    return
+                raise zookeeper.NoNodeException(
+                    "Queue non existant %s"%self.path)
+
         d.addCallback(on_success)
+        d.addErrback(on_error)
         return d
 
-    def _get_item(self, name):
+    def _get_item(self, name, wait):
+        """
+        Fetch the node data in the queue directory for the given node name. If
+        wait is
+        """
         d = self.client.get("/".join((self.path, name)))
 
         def on_success(data):
-            # on nested _get calls we get back just the data
-            # versus as a result of client.get.
-            #print "got data", data
+            # on nested _get calls we get back just the data versus a result of
+            # client.get.
             if not isinstance(data, tuple):
                 return data
             return data[0]
@@ -89,10 +101,10 @@ class Queue(object):
                 # tests. Instead we process our entire our node cache before
                 # proceeding.
                 if self._cached_entries:
-                    return self._get_item(self._cached_entries.pop())
+                    return self._get_item(self._cached_entries.pop(), wait)
 
-                # Rare in practice, but if the cache is empty, restart the get
-                return self.get() # pragma: no cover
+                # if the cache is empty, restart the get. Fairly rare.
+                return self._get(wait) # pragma: no cover
 
             return failure
 
@@ -107,9 +119,13 @@ class Queue(object):
         """
         return self._get()
 
+    get_nowait = get
+
     def get_wait(self):
         """
         Get and remove an item from the queue. If no item is available
+        at the moment, a deferred is return that will fire when an item
+        is available.
         """
         return self._get(wait=True)
 
@@ -126,18 +142,17 @@ class Queue(object):
             raise Empty()
 
         name = self._cached_entries.pop(0)
-        d = self._get_item(name)
+        d = self._get_item(name, wait)
 
         def on_no_node_error(failure):
             if isinstance(failure.value, zookeeper.NoNodeException):
-                return self.get()
+                return self._get(wait=wait)
             return failure
 
         def on_success_remove(data):
             d = self.client.delete("/".join((self.path, name)))
 
             def on_success(delete_result):
-                #print "return data"
                 return data
 
             d.addCallback(on_success)

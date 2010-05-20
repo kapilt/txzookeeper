@@ -1,7 +1,9 @@
 
-from twisted.internet.defer import inlineCallbacks, returnValue, DeferredList
+from twisted.internet.defer import (
+    inlineCallbacks, returnValue, DeferredList, Deferred)
 
 from txzookeeper import ZookeeperClient
+from txzookeeper.client import NotConnectedException
 from txzookeeper.queue import Queue, Empty
 from txzookeeper.tests import ZookeeperTestCase, utils
 
@@ -88,8 +90,6 @@ class QueueTests(ZookeeperTestCase):
         item is ready in the queue.
         """
         client = yield self.open_client()
-        test_client = yield self.open_client()
-
         path = yield client.create("/queue-wait-test")
         item = "zebra moon"
         queue = Queue(path, client)
@@ -97,7 +97,7 @@ class QueueTests(ZookeeperTestCase):
 
         @inlineCallbacks
         def push_item():
-            queue = Queue(path, test_client)
+            queue = Queue(path, client)
             yield queue.put("zebra moon")
 
         def verify_item_received(data):
@@ -107,13 +107,68 @@ class QueueTests(ZookeeperTestCase):
         d.addCallback(verify_item_received)
 
         from twisted.internet import reactor
-        reactor.callLater(0.4, push_item)
+        reactor.callLater(0.1, push_item)
 
         data = yield d
         self.assertEqual(data, item)
 
     @inlineCallbacks
-    def test_multiconsumer_multiproducer(self):
+    def test_interleaved_multiple_consumers_wait(self):
+        """
+        Multiple consumers waiting (deferred block) on a queue works as
+        expected.
+        """
+        test_client = yield self.open_client()
+        path = yield test_client.create("/multi-consumer-wait-test")
+        results = []
+
+        @inlineCallbacks
+        def producer(item_count):
+            from twisted.internet import reactor
+            client = yield self.open_client()
+            queue = Queue(path, client)
+
+            items = []
+            producer_done = Deferred()
+
+            def iteration(i):
+                if len(items) == (item_count-1):
+                    return producer_done.callback(None)
+                items.append(i)
+                queue.put(str(i))
+
+            for i in range(item_count):
+                reactor.callLater(i*0.05, iteration, i)
+            yield producer_done
+            returnValue(items)
+
+        @inlineCallbacks
+        def consumer(item_count):
+            client = yield self.open_client()
+            queue = Queue(path, client)
+            for i in range(item_count):
+                try:
+                    data = yield queue.get_wait()
+                except NotConnectedException:
+                    # when the test closes, we need to catch this
+                    # as one of the producers will likely hang.
+                    returnValue(len(results))
+                results.append((client.handle, data))
+            returnValue(len(results))
+
+        yield DeferredList(
+            [DeferredList([consumer(3), consumer(2)], fireOnOneCallback=1),
+             producer(6)])
+        self.assertEqual(len(results), 5)
+
+    @inlineCallbacks
+    def test_staged_multiproducer_multiconsumer(self):
+        """
+        A real world scenario test, A set of producers filling a queue with
+        items, and then a set of concurrent consumers pulling from the queue
+        till its empty. The consumers use a non blocking get (defer raises
+        exception on empty).
+        """
         test_client = yield self.open_client()
         path = yield test_client.create("/multi-prod-cons")
 
