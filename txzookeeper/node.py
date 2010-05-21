@@ -1,4 +1,5 @@
 from zookeeper import NoNodeException, NodeExistsException, BadVersionException
+from twisted.internet.defer import Deferred
 
 
 class ZNode(object):
@@ -26,7 +27,14 @@ class ZNode(object):
         if isinstance(failure.value, BadVersionException):
             self._node_exists = None
             self._node_stat = None
-        return failure
+        return failure # pragma: no cover
+
+    def _on_exists_success(self, node_stat):
+            if node_stat is None:
+                return False
+            self._node_exists = True
+            self._node_stat = node_stat
+            return True
 
     def exists(self):
         """
@@ -44,26 +52,54 @@ class ZNode(object):
         d.addCallback(on_success)
         return d
 
+    def exists_with_watch(self):
+        """
+        Returns a boolean based on the node's existence. Also returns a
+        deferred that fires when the node is modified/created/added/deleted.
+        """
+        node_changed = Deferred()
+
+        def on_node_event(event, state, path):
+            return node_changed.callback((event, state, path))
+
+        d = self._context.exists(self.path, on_node_event)
+        return d, node_changed
+
+    def _on_get_node_error(self, failure):
+        if isinstance(failure.value, NoNodeException):
+            self._node_exists = False
+            return
+        return failure # pragma: no cover
+
+    def _on_get_node_success(self, data):
+        (node_data, node_stat) = data
+        self._node_exists = True
+        self._node_stat = node_stat
+        return node_data
+
     def get_data(self):
         """
         Retrieve the node's data.
         """
         d = self._context.get(self.path)
-
-        def on_error(failure):
-            if isinstance(failure.value, NoNodeException):
-                self._node_exists = False
-                return
-            return failure
-
-        def on_success((node_data, node_stat)):
-            self._node_exists = True
-            self._node_stat = node_stat
-            return node_data
-
-        d.addCallback(on_success)
-        d.addErrback(on_error)
+        d.addCallback(self._on_get_node_success)
+        d.addErrback(self._on_get_node_error)
         return d
+
+    def get_data_with_watch(self):
+        """
+        Retrieve the node's data and a deferred that fires when this data
+        changes.
+        """
+        node_changed = Deferred()
+
+        def on_node_change(event, status, path):
+            node_changed.callback((event, status, path))
+
+        d = self._context.get(self.path, watcher=on_node_change)
+        d.addCallback(self._on_get_node_success)
+        d.addCallback(self._on_get_node_error)
+        return d, node_changed
 
     def set_data(self, data):
         """
@@ -81,7 +117,7 @@ class ZNode(object):
             def on_error_node_nonexistant(failure):
                 if isinstance(failure.value, NoNodeException):
                     return self._context.create(self.path, data)
-                return failure
+                return failure # pragma: no cover
 
             d = self._context.set(self.path, data, self._get_version())
             d.addErrback(on_error_node_nonexistant)
@@ -94,29 +130,12 @@ class ZNode(object):
         def on_error_node_exists(failure):
             if isinstance(failure.value, NodeExistsException):
                 return self._context.set(self.path, data, self._get_version())
-            return failure
+            return failure # pragma: no cover
 
         d.addCallback(on_success)
         d.addErrback(on_error_node_exists)
         d.addErrback(self._on_error_bad_version)
         return d
-
-    def subscribe(self, notify):
-        """
-        Subscribe to events that change the node. This includes,
-        modify, create, delete events.
-
-        @param notify: function taking three arguments (event, state, path)
-                       the function will be called back when an event happens
-                       on the node.
-        """
-        return self._context.exists(self.path, watcher=notify)
-
-    def subscribe_children(self, notify):
-        """
-        @param notify: function taking three
-        """
-        return self._context.get_children(self.path, watcher=notify)
 
     def get_acl(self):
         """
@@ -146,22 +165,39 @@ class ZNode(object):
         d.addErrback(self._on_error_bad_version)
         return d
 
+    def _on_get_children_filter_results(self, children, prefix):
+        if prefix:
+            children = [
+                name for name in children if name.startswith(prefix)]
+        return [
+            self.__class__("/".join((self.path, name)), self._context)
+            for name in children]
+
     def get_children(self, prefix=None):
         """
         Get the children of this node, as ZNode objects. Optionally
         a name prefix may be passed which the child node must abide.
         """
         d = self._context.get_children(self.path)
-
-        def on_success(children):
-            if prefix:
-                children = [
-                    name for name in children if name.startswith(prefix)]
-            return [
-                self.__class__("/".join((self.path, name)), self._context)
-                for name in children]
-        d.addCallback(on_success)
+        d.addCallback(self._on_get_children_filter_results, prefix)
         return d
+
+    def get_children_watch(self, prefix=None):
+        """
+        Get the children of this node, as ZNode objects, and also return
+        a deferred that fires if a child is added or deleted. Optionally
+        a name prefix may be passed which the child node must abide.
+        """
+        children_changed = Deferred()
+
+        def on_child_added_removed(event, status, path):
+            # path is the container not the child.
+            children_changed.callback((event, status, path))
+
+        d = self._context.get_children(
+            self.path, watcher=on_child_added_removed)
+        d.addCallback(self._on_get_children_filter_results, prefix)
+        return d, children_changed
 
     def __cmp__(self, other):
         return cmp(self.path, other.path)
