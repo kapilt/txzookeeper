@@ -177,7 +177,7 @@ class NodeTest(TestCase):
         get these create event callbacks for non existant nodes.
         """
         node = ZNode("/zoo/elephant", self.client)
-        exists, watch = yield node.exists_with_watch()
+        exists, watch = yield node.exists_and_watch()
 
         self.client.create("/zoo/elephant")
         event, state, path = yield watch

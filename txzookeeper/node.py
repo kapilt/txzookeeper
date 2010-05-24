@@ -44,7 +44,7 @@ class ZNode(object):
         d.addCallback(self._on_exists_success)
         return d
 
-    def exists_with_watch(self):
+    def exists_and_watch(self):
         """
         Returns a boolean based on the node's existence. Also returns a
         deferred that fires when the node is modified/created/added/deleted.
