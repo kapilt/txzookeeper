@@ -30,26 +30,18 @@ class ZNode(object):
         return failure # pragma: no cover
 
     def _on_exists_success(self, node_stat):
-            if node_stat is None:
-                return False
-            self._node_exists = True
-            self._node_stat = node_stat
-            return True
+        if node_stat is None:
+            return False
+        self._node_exists = True
+        self._node_stat = node_stat
+        return True
 
     def exists(self):
         """
         Does the node exist or not, returns a boolean.
         """
         d = self._context.exists(self.path)
-
-        def on_success(node_stat):
-            if node_stat is None:
-                return False
-            self._node_exists = True
-            self._node_stat = node_stat
-            return True
-
-        d.addCallback(on_success)
+        d.addCallback(self._on_exists_success)
         return d
 
     def exists_with_watch(self):
@@ -63,6 +55,7 @@ class ZNode(object):
             return node_changed.callback((event, state, path))
 
         d = self._context.exists(self.path, on_node_event)
+        d.addCallback(self._on_exists_success)
         return d, node_changed
 
     def _on_get_node_error(self, failure):
@@ -86,7 +79,7 @@ class ZNode(object):
         d.addErrback(self._on_get_node_error)
         return d
 
-    def get_data_with_watch(self):
+    def get_data_and_watch(self):
         """
         Retrieve the node's data and a deferred that fires when this data
         changes.
@@ -98,7 +91,7 @@ class ZNode(object):
 
         d = self._context.get(self.path, watcher=on_node_change)
         d.addCallback(self._on_get_node_success)
-        d.addCallback(self._on_get_node_error)
+        d.addErrback(self._on_get_node_error)
         return d, node_changed
 
     def set_data(self, data):
@@ -119,7 +112,8 @@ class ZNode(object):
                     return self._context.create(self.path, data)
                 return failure # pragma: no cover
 
-            d = self._context.set(self.path, data, self._get_version())
+            version = self._get_version()
+            d = self._context.set(self.path, data, version)
             d.addErrback(on_error_node_nonexistant)
             d.addErrback(self._on_error_bad_version)
             d.addCallback(on_success)
@@ -129,7 +123,8 @@ class ZNode(object):
 
         def on_error_node_exists(failure):
             if isinstance(failure.value, NodeExistsException):
-                return self._context.set(self.path, data, self._get_version())
+                version = self._get_version()
+                return self._context.set(self.path, data, version)
             return failure # pragma: no cover
 
         d.addCallback(on_success)
@@ -156,10 +151,6 @@ class ZNode(object):
         """
         Set the ACL for this node.
         """
-        # oddly zookeeper will let you set an acl on a nonexistant node
-        # this is our one caveat to no caching though management though.
-        if self._node_exists is False:
-            raise ValueError("node doesn't exist")
         d = self._context.set_acl(
             self.path, acl, self._get_version())
         d.addErrback(self._on_error_bad_version)
@@ -182,7 +173,7 @@ class ZNode(object):
         d.addCallback(self._on_get_children_filter_results, prefix)
         return d
 
-    def get_children_watch(self, prefix=None):
+    def get_children_and_watch(self, prefix=None):
         """
         Get the children of this node, as ZNode objects, and also return
         a deferred that fires if a child is added or deleted. Optionally

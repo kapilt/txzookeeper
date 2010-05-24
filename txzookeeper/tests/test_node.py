@@ -17,6 +17,7 @@ class NodeTest(TestCase):
         zookeeper.set_debug_level(zookeeper.LOG_LEVEL_ERROR)
         self.client = ZookeeperClient("127.0.0.1:2181", 2000)
         d = self.client.connect()
+        self.client2 = None
 
         def create_zoo(client):
             client.create("/zoo")
@@ -28,6 +29,8 @@ class NodeTest(TestCase):
         deleteTree(handle=self.client.handle)
         if self.client.connected:
             self.client.close()
+        if self.client2 and self.client2.connected:
+            self.client2.close()
         zookeeper.set_debug_level(zookeeper.LOG_LEVEL_DEBUG)
 
     def _make_digest_identity(self, credentials):
@@ -166,62 +169,47 @@ class NodeTest(TestCase):
         self.assertEqual(data, "banana")
 
     @inlineCallbacks
-    def xtest_node_subscribe_nonexistant(self):
+    def test_node_exists_with_watch_nonexistant(self):
         """
-        The node can be subscribed to, any node level events,
-        created, deleted, modified will be sent to the subscriber.
-        You can subscribe to non existant nodes.
+        The node's existance can be checked with the exist_watch api
+        a deferred will be returned and any node level events,
+        created, deleted, modified invoke the callback. You can
+        get these create event callbacks for non existant nodes.
         """
-        subscriber_deferred = Deferred()
-
-        def notify_subscriber(event, state, path):
-            subscriber_deferred.callback((event, state, path))
-
         node = ZNode("/zoo/elephant", self.client)
-        yield node.subscribe(notify_subscriber)
+        exists, watch = yield node.exists_with_watch()
 
         self.client.create("/zoo/elephant")
-        event, state, path = yield subscriber_deferred
+        event, state, path = yield watch
         self.assertEqual(event, zookeeper.CREATED_EVENT)
 
     @inlineCallbacks
-    def xtest_node_subscribe_update_event(self):
+    def test_node_get_data_with_watch_on_update(self):
         """
         Subscribing to a node will get node update events.
         """
-        subscriber_deferred = Deferred()
-
-        def notify_subscriber(event, state, path):
-            subscriber_deferred.callback((event, state, path))
-
         yield self.client.create("/zoo/elephant")
 
         node = ZNode("/zoo/elephant", self.client)
-        yield node.subscribe(notify_subscriber)
-
+        data, watch = yield node.get_data_and_watch()
         yield self.client.set("/zoo/elephant")
-        event, state, path = yield subscriber_deferred
+        event, state, path = yield watch
         self.assertEqual(event, zookeeper.CHANGED_EVENT)
         self.assertEqual(path, "/zoo/elephant")
 
     @inlineCallbacks
-    def xtest_node_subscribe_delete_event(self):
+    def test_node_get_data_with_watch_on_delete(self):
         """
         Subscribing to a node will get node deletion events.
         """
-        subscriber_deferred = Deferred()
-
-        def notify_subscriber(event, state, path):
-            subscriber_deferred.callback((event, state, path))
-
         yield self.client.create("/zoo/elephant")
 
         node = ZNode("/zoo/elephant", self.client)
-        yield node.subscribe(notify_subscriber)
+        data, watch = yield node.get_data_and_watch()
 
-        yield self.client.set("/zoo/elephant")
-        event, state, path = yield subscriber_deferred
-        self.assertEqual(event, zookeeper.CHANGED_EVENT)
+        yield self.client.delete("/zoo/elephant")
+        event, state, path = yield watch
+        self.assertEqual(event, zookeeper.DELETED_EVENT)
         self.assertEqual(path, "/zoo/elephant")
 
     @inlineCallbacks
@@ -251,67 +239,56 @@ class NodeTest(TestCase):
         self.assertEqual(len(children), 1)
 
     @inlineCallbacks
-    def xtest_node_subscribe_children_create(self):
+    def test_node_get_children_with_watch_create(self):
         """
-        A node's children can explicitly subscribed to given existnace
+        A node's children can explicitly be watched to given existance
         events for node creation and destruction.
         """
-        subscriber_deferred = Deferred()
-
-        def notify_subscriber(event, state, path):
-            subscriber_deferred.callback((event, state, path))
-
         node = ZNode("/zoo", self.client)
-        yield node.subscribe_children(notify_subscriber)
+        children, watch = yield node.get_children_and_watch()
         yield self.client.create("/zoo/lion")
-        event, state, path = yield subscriber_deferred
+        event, state, path = yield watch
         self.assertEqual(path, "/zoo")
         self.assertEqual(event, zookeeper.CHILD_EVENT)
 
     @inlineCallbacks
-    def xtest_node_subscribe_children_delete(self):
+    def test_node_get_children_with_watch_delete(self):
         """
-        A node's children can explicitly subscribed to given existnace
+        A node's children can explicitly be watched to given existance
         events for node creation and destruction.
         """
-        subscriber_deferred = Deferred()
-
-        def notify_subscriber(event, state, path):
-            subscriber_deferred.callback((event, state, path))
-
         node = ZNode("/zoo", self.client)
         yield self.client.create("/zoo/lion")
-        yield node.subscribe_children(notify_subscriber)
+        children, watch = yield node.get_children_and_watch()
         yield self.client.delete("/zoo/lion")
-        event, state, path = yield subscriber_deferred
+        event, state, path = yield watch
         self.assertEqual(path, "/zoo")
         self.assertEqual(event, zookeeper.CHILD_EVENT)
 
     @inlineCallbacks
-    def xtest_node_subscribe_children_modify(self):
+    def test_bad_version_error(self):
         """
-        Subscribing for child events, does not notify on child modification.
+        The node captures the node version on any read operations, which
+        it utilizes for write operations. On a concurrent modification error
+        the node return a bad version error, this also clears the cached
+        state so subsequent modifications will be against the latest version,
+        unless the cache is seeded again by a read operation.
         """
-        from twisted.internet import reactor
-        subscriber_deferred = Deferred()
+        node = ZNode("/zoo/lion", self.client)
 
-        # so we need to assert that we're not being called back. we
-        # register the subscriber, and a timed function which invokes
-        # the errback on the subscriber deferred.
-        def notify_subscriber(event, state, path):
-            if subscriber_deferred.called:
-                return
-            self.fail("should not be invoked (%s, %s, %s)"%(
-                event, state, path))
+        self.client2 = ZookeeperClient("127.0.0.1:2181")
+        yield self.client2.connect()
 
-        def timeout(*args):
-            subscriber_deferred.callback((None, None, None))
+        yield self.client.create("/zoo/lion", "mouse")
+        yield node.get_data()
+        yield self.client2.set("/zoo/lion", "den2")
+        data = yield self.client.exists("/zoo/lion")
+        self.assertEqual(data['version'], 1)
+        d = node.set_data("zebra")
+        self.failUnlessFailure(d, zookeeper.BadVersionException)
+        yield d
 
-        node = ZNode("/zoo", self.client)
-        yield self.client.create("/zoo/lion")
-        yield node.subscribe_children(notify_subscriber)
-        yield self.client.exists("/zoo/lion")
-        reactor.callLater(0.2, timeout)
-        event, state, path = yield subscriber_deferred
-        self.assertEqual(path, None)
-        self.assertEqual(event, None)
+        # after failure the cache is deleted, and a set proceeds
+        yield node.set_data("zebra")
+        data = yield node.get_data()
+        self.assertEqual(data, "zebra")
