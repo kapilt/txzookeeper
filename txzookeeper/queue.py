@@ -29,14 +29,14 @@ from client import ZOO_OPEN_ACL_UNSAFE
 
 class Queue(object):
 
-    prefix = "entry-"
+    _prefix = "entry-"
 
-    def __init__(
-        self, path, client, acl=[ZOO_OPEN_ACL_UNSAFE], persistent=False):
-
+    def __init__(self, path, client, acl=None, persistent=False):
         self._path = path
         self._client = client
         self._persistent = persistent
+        if acl is None:
+            acl = [ZOO_OPEN_ACL_UNSAFE]
         self._acl = list(acl)
         self._cached_entries = []
 
@@ -77,7 +77,7 @@ class Queue(object):
             flags = flags|zookeeper.EPHEMERAL
 
         d = self._client.create(
-            "/".join((self._path, self.prefix)), item, self._acl, flags)
+            "/".join((self._path, self._prefix)), item, self._acl, flags)
         return d
 
     def qsize(self):
