@@ -42,6 +42,22 @@ class QueueTests(ZookeeperTestCase):
             yield d
         returnValue(client)
 
+    def test_path_property(self):
+        """
+        The queue has a property that can be used to introspect its
+        path in read only manner.
+        """
+        q = Queue("/moon", None)
+        self.assertEqual(q.path, "/moon")
+
+    def test_persistent_property(self):
+        """
+        The queue has a property that can be used to introspect
+        whether or not the queue entries are persistent.
+        """
+        q = Queue("/moon", None, persistent=True)
+        self.assertEqual(q.persistent, True)
+
     @inlineCallbacks
     def test_put_get_nowait_item(self):
         """

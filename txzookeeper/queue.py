@@ -34,11 +34,21 @@ class Queue(object):
     def __init__(
         self, path, client, acl=[ZOO_OPEN_ACL_UNSAFE], persistent=False):
 
-        self.path = path
-        self.client = client
-        self.persistent = persistent
+        self._path = path
+        self._client = client
+        self._persistent = persistent
         self._acl = list(acl)
         self._cached_entries = []
+
+    @property
+    def path(self):
+        """Path to the queue."""
+        return self._path
+
+    @property
+    def persistent(self):
+        """If the queue is persistent returns True."""
+        return self._persistent
 
     def get(self):
         """
@@ -63,11 +73,11 @@ class Queue(object):
             raise ValueError("queue items must be strings")
 
         flags = zookeeper.SEQUENCE
-        if not self.persistent:
+        if not self._persistent:
             flags = flags|zookeeper.EPHEMERAL
 
-        d = self.client.create(
-            "/".join((self.path, self.prefix)), item, self._acl, flags)
+        d = self._client.create(
+            "/".join((self._path, self.prefix)), item, self._acl, flags)
         return d
 
     def qsize(self):
@@ -75,7 +85,7 @@ class Queue(object):
         Return the approximate size of the queue. This value is always
         effectively a snapshot. Returns a deferred returning an integer.
         """
-        d = self.client.exists(self.path)
+        d = self._client.exists(self._path)
 
         def on_success(stat):
             return stat["numChildren"]
@@ -99,7 +109,7 @@ class Queue(object):
 
         def on_queue_items_changed(*args):
             """Event watcher on queue node child events."""
-            if not self.client.connected:
+            if not self._client.connected:
                 return
 
             # refill cache
@@ -112,8 +122,8 @@ class Queue(object):
                 child_available.callback(None)
             d.addCallback(notify_waiting)
 
-        d = self.client.get_children(
-            self.path, on_queue_items_changed)
+        d = self._client.get_children(
+            self._path, on_queue_items_changed)
 
         def on_success(children):
             self._cached_entries = children
@@ -127,10 +137,10 @@ class Queue(object):
             # if no node error on get children than our queue has been
             # destroyed or was never created.
             if isinstance(failure.value, zookeeper.NoNodeException):
-                if not self.client.connected:
+                if not self._client.connected:
                     return
                 raise zookeeper.NoNodeException(
-                    "Queue node doesn't exist %s"%self.path)
+                    "Queue node doesn't exist %s"%self._path)
             return failure
 
         d.addCallback(on_success)
@@ -142,7 +152,7 @@ class Queue(object):
         Fetch the node data in the queue directory for the given node name. The
         wait boolean argument is passed only to restart the get.
         """
-        d = self.client.get("/".join((self.path, name)))
+        d = self._client.get("/".join((self._path, name)))
 
         def on_success(data):
             # on nested _get calls we get back just the data versus a result of
@@ -186,7 +196,7 @@ class Queue(object):
             return failure
 
         def on_success_remove(data):
-            d = self.client.delete("/".join((self.path, name)))
+            d = self._client.delete("/".join((self._path, name)))
 
             def on_success(delete_result):
                 return data
