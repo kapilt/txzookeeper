@@ -16,7 +16,6 @@ Todo:
 
  - one failing of the current implementation, is if the queue itself is
    transient, waiting gets won't ever be invoked if the queue is deleted.
- 
 """
 
 from Queue import Empty
@@ -106,7 +105,6 @@ class Queue(object):
                 return
 
             # refill cache
-            self._cached_entries = []
             d = self._refill(wait=wait)
             if not wait:
                 return
@@ -143,8 +141,8 @@ class Queue(object):
 
     def _get_item(self, name, wait):
         """
-        Fetch the node data in the queue directory for the given node name. If
-        wait is
+        Fetch the node data in the queue directory for the given node name. The
+        wait boolean argument is passed only to restart the get.
         """
         d = self.client.get("/".join((self.path, name)))
 
@@ -156,19 +154,13 @@ class Queue(object):
             return data[0]
 
         def on_no_node(failure):
-            if isinstance(failure.value, zookeeper.NoNodeException):
-                # kapil -> this isn't just an optimization. If we attempt to
-                # refill directly zookeeper client will toss either Interupted
-                # system call or No such process exceptions, at least in looped
-                # tests. Instead we process our entire our node cache before
-                # proceeding.
-                if self._cached_entries:
-                    return self._get_item(self._cached_entries.pop(), wait)
+            failure.trap(zookeeper.NoNodeException)
+            # We process our entire node cache before attempting to refill.
+            if self._cached_entries:
+                return self._get_item(self._cached_entries.pop(), wait)
 
-                # if the cache is empty, restart the get. Fairly rare.
-                return self._get(wait) # pragma: no cover
-
-            return failure # pragma: no cover
+            # If the cache is empty, restart the get. Fairly rare.
+            return self._get(wait) # pragma: no cover
 
         d.addErrback(on_no_node)
         d.addCallback(on_success)
