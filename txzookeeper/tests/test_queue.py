@@ -148,7 +148,7 @@ class QueueTests(ZookeeperTestCase):
         path = yield client.create("/queue-wait-test")
         item = "zebra moon"
         queue = Queue(path, client)
-        d = queue.get_wait()
+        d = queue.get()
 
         @inlineCallbacks
         def push_item():
@@ -203,7 +203,7 @@ class QueueTests(ZookeeperTestCase):
             queue = Queue(path, client)
             for i in range(item_count):
                 try:
-                    data = yield queue.get_wait()
+                    data = yield queue.get()
                 except NotConnectedException:
                     # when the test closes, we need to catch this
                     # as one of the producers will likely hang.

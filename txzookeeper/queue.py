@@ -48,8 +48,6 @@ class Queue(object):
         """
         return self._get(wait=True)
 
-    get_wait = get
-
     def get_nowait(self):
         """
         Get and remove an item from the queue. If no item is available
