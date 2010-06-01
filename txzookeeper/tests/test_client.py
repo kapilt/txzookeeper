@@ -635,6 +635,9 @@ class ClientTests(ZookeeperTestCase):
             d = client.add_auth("digest", "bob:martini")
             # a little hack to avoid slowness around adding auth
             # see https://issues.apache.org/jira/browse/ZOOKEEPER-770
+            # by pushing an additional message send/response cycle
+            # we don't have to wait for the io thread to timeout
+            # on the socket.
             client.exists("/orchard")
             return d
 
