@@ -122,15 +122,14 @@ class Queue(object):
             if not self._cached_entries:
                 return children_changed
 
-        def on_error(failure): # pragma: no cover
+        def on_error(failure):
             # if no node error on get children than our queue has been
             # destroyed or was never created.
-            if isinstance(failure.value, zookeeper.NoNodeException):
-                if not self._client.connected:
-                    return
-                raise zookeeper.NoNodeException(
-                    "Queue node doesn't exist %s"%self._path)
-            return failure
+            failure.trap(zookeeper.NoNodeException)
+            if not self._client.connected:
+                return
+            raise zookeeper.NoNodeException(
+                "Queue node doesn't exist %s"%self._path)
 
         d.addCallback(on_success)
         d.addErrback(on_error)
@@ -159,7 +158,7 @@ class Queue(object):
                 return self._get_item(self._cached_entries.pop())
 
             # If the cache is empty, restart the get. Fairly rare.
-            return self._get() # pragma: no cover
+            return self._get() # 2pragma2: no cover
 
         d.addErrback(on_no_node)
         d.addCallback(on_success)
@@ -172,6 +171,7 @@ class Queue(object):
         an Empty exception is raised. If wait is True, a deferred
         that fires only when an item has been retrieved is returned.
         """
+
         if not self._cached_entries:
             yield self._refill()
 

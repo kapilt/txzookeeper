@@ -59,31 +59,6 @@ class QueueTests(ZookeeperTestCase):
         self.assertEqual(q.persistent, True)
 
     @inlineCallbacks
-    def xtest_put_get_nowait_item(self):
-        """
-        We can put and get an item off the queue.
-        """
-        client = yield self.open_client()
-        path = yield client.create("/queue-test")
-        queue = Queue(path, client)
-        item = "transform image bluemarble.jpg"
-        yield queue.put(item)
-        item2 = yield queue.get_nowait()
-        self.assertEqual(item, item2)
-
-    @inlineCallbacks
-    def xtest_get_nowait_empty_queue(self):
-        """
-        Fetching from an empty queue raises the Empty exception if
-        the client uses the the nowait api.
-        """
-        client = yield self.open_client()
-        path = yield client.create("/queue-test")
-        queue = Queue(path, client)
-        queue_get = queue.get_nowait()
-        yield self.failUnlessFailure(queue_get, Empty)
-
-    @inlineCallbacks
     def test_put_item(self):
         """
         An item can be put on the queue, and is stored in a node in
@@ -141,7 +116,8 @@ class QueueTests(ZookeeperTestCase):
         """
         client = yield self.open_client()
         queue = Queue("/unused", client)
-        self.failUnlessFailure(queue.get(), NoNodeException)
+        d = queue.get()
+        yield self.failUnlessFailure(d, NoNodeException)
 
     @inlineCallbacks
     def test_put_with_invalid_queue(self):
@@ -151,7 +127,7 @@ class QueueTests(ZookeeperTestCase):
         """
         client = yield self.open_client()
         queue = Queue("/unused", client)
-        self.failUnlessFailure(queue.put("abc"), NoNodeException)
+        yield self.failUnlessFailure(queue.put("abc"), NoNodeException)
 
     @inlineCallbacks
     def test_get_and_put(self):
