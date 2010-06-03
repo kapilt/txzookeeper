@@ -37,7 +37,7 @@ class Queue(object):
         self._persistent = persistent
         if acl is None:
             acl = [ZOO_OPEN_ACL_UNSAFE]
-        self._acl = list(acl)
+        self._acl = acl
         self._cached_entries = []
 
     @property
@@ -55,13 +55,6 @@ class Queue(object):
         Get and remove an item from the queue. If no item is available
         at the moment, a deferred is return that will fire when an item
         is available.
-        """
-        return self._get(wait=True)
-
-    def get_nowait(self):
-        """
-        Get and remove an item from the queue. If no item is available
-        an Empty exception is raised.
         """
         return self._get()
 
@@ -93,7 +86,7 @@ class Queue(object):
         d.addCallback(on_success)
         return d
 
-    def _refill(self, wait=False):
+    def _refill(self):
         """
         Refetch the queue children, setting a watch as needed, and invalidating
         any previous children entries queue.
@@ -113,14 +106,12 @@ class Queue(object):
                 return
 
             # refill cache
-            d = self._refill(wait=wait)
-            if not wait:
-                return
+            after_refill = self._refill()
 
             # notify any waiting
             def notify_waiting(value):
                 child_available.callback(None)
-            d.addCallback(notify_waiting)
+            after_refill.addCallback(notify_waiting)
 
         d = self._client.get_children(
             self._path, on_queue_items_changed)
@@ -130,8 +121,7 @@ class Queue(object):
             self._cached_entries.sort()
 
             if not self._cached_entries:
-                if wait:
-                    return child_available
+                return child_available
 
         def on_error(failure): # pragma: no cover
             # if no node error on get children than our queue has been
@@ -147,7 +137,7 @@ class Queue(object):
         d.addErrback(on_error)
         return d
 
-    def _get_item(self, name, wait):
+    def _get_item(self, name):
         """
         Fetch the node data in the queue directory for the given node name. The
         wait boolean argument is passed only to restart the get.
@@ -165,45 +155,42 @@ class Queue(object):
             failure.trap(zookeeper.NoNodeException)
             # We process our entire node cache before attempting to refill.
             if self._cached_entries:
-                return self._get_item(self._cached_entries.pop(), wait)
+                return self._get_item(self._cached_entries.pop())
 
             # If the cache is empty, restart the get. Fairly rare.
-            return self._get(wait) # pragma: no cover
+            return self._get() # pragma: no cover
 
         d.addErrback(on_no_node)
         d.addCallback(on_success)
         return d
 
     @inlineCallbacks
-    def _get(self, wait=False):
+    def _get(self):
         """
         Get and remove an item from the queue. If no item is available
         an Empty exception is raised. If wait is True, a deferred
         that fires only when an item has been retrieved is returned.
         """
         if not self._cached_entries:
-            yield self._refill(wait=wait)
-
-        if not wait and not self._cached_entries:
-            raise Empty()
+            yield self._refill()
 
         name = self._cached_entries.pop(0)
-        d = self._get_item(name, wait)
+        d = self._get_item(name)
 
         def on_no_node_error(failure):
             if isinstance(failure.value, zookeeper.NoNodeException):
-                return self._get(wait=wait)
+                return self._get()
             return failure
 
         def on_success_remove(data):
-            d = self._client.delete("/".join((self._path, name)))
+            after_delete = self._client.delete("/".join((self._path, name)))
 
             def on_success(delete_result):
                 return data
 
-            d.addCallback(on_success)
-            d.addErrback(on_no_node_error)
-            return d
+            after_delete.addCallback(on_success)
+            after_delete.addErrback(on_no_node_error)
+            return after_delete
 
         d.addCallback(on_success_remove)
         d.addErrback(on_no_node_error)
