@@ -5,7 +5,7 @@ from twisted.internet.defer import (
 
 from txzookeeper import ZookeeperClient
 from txzookeeper.client import NotConnectedException
-from txzookeeper.queue import Queue, Empty
+from txzookeeper.queue import Queue
 from txzookeeper.tests import ZookeeperTestCase, utils
 
 

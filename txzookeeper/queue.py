@@ -18,8 +18,6 @@ Todo:
    transient, waiting gets won't ever be invoked if the queue is deleted.
 """
 
-from Queue import Empty
-
 import zookeeper
 
 from twisted.internet.defer import inlineCallbacks, returnValue, Deferred
@@ -98,7 +96,7 @@ class Queue(object):
         """
         d = None
 
-        child_available = Deferred()
+        children_changed = Deferred()
 
         def on_queue_items_changed(*args):
             """Event watcher on queue node child events."""
@@ -110,7 +108,8 @@ class Queue(object):
 
             # notify any waiting
             def notify_waiting(value):
-                child_available.callback(None)
+                children_changed.callback(None)
+
             after_refill.addCallback(notify_waiting)
 
         d = self._client.get_children(
@@ -121,7 +120,7 @@ class Queue(object):
             self._cached_entries.sort()
 
             if not self._cached_entries:
-                return child_available
+                return children_changed
 
         def on_error(failure): # pragma: no cover
             # if no node error on get children than our queue has been
@@ -152,7 +151,9 @@ class Queue(object):
             return data[0]
 
         def on_no_node(failure):
+            # If another consumer got the node, fetch another node.
             failure.trap(zookeeper.NoNodeException)
+
             # We process our entire node cache before attempting to refill.
             if self._cached_entries:
                 return self._get_item(self._cached_entries.pop())
@@ -178,9 +179,9 @@ class Queue(object):
         d = self._get_item(name)
 
         def on_no_node_error(failure):
-            if isinstance(failure.value, zookeeper.NoNodeException):
-                return self._get()
-            return failure
+            # if another consumer got the node, fetch another
+            failure.trap(zookeeper.NoNodeException)
+            return self._get()
 
         def on_success_remove(data):
             after_delete = self._client.delete("/".join((self._path, name)))
