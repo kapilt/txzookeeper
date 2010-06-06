@@ -1,7 +1,8 @@
 
 import zookeeper
 
-from twisted.internet.defer import inlineCallbacks, returnValue
+from mocker import ANY
+from twisted.internet.defer import inlineCallbacks, returnValue, Deferred
 
 from txzookeeper import ZookeeperClient
 from txzookeeper.lock import Lock
@@ -81,7 +82,7 @@ class LockTests(ZookeeperTestCase):
         self.assertRaises(ValueError, lock.acquire)
 
     @inlineCallbacks
-    def xtest_error_on_acquire_while_acquiring(self):
+    def test_error_on_acquire_while_acquiring(self):
         """
         If a lock instance is already attempting to acquire the lock,
         then trying to reacquire it is an error.
@@ -99,19 +100,23 @@ class LockTests(ZookeeperTestCase):
 
         # this won't ever acquire because of the above node
         # but we need to give it a moment to attempt it.
+        mock_lock = self.mocker.patch(lock)
+        mock_lock._acquire(ANY, ANY)
+        acquire_deferred = Deferred()
+        self.mocker.result(acquire_deferred)
+        self.mocker.replay()
+
         d = lock.acquire()
         from twisted.internet import reactor
 
         def verify_acquire_while_acquiring():
             self.assertRaises(ValueError, lock.acquire)
-            # stop the attempt to acquire the lock, fires
-            # an error on the lock acquire deferred.
-            return lock.release(acquiring=True)
+            acquire_deferred.callback(None)
 
         reactor.callLater(0.1, verify_acquire_while_acquiring)
 
         self.failUnlessFailure(d, ValueError)
-        yield d
+        yield acquire_deferred
 
     @inlineCallbacks
     def test_error_when_releasing_unacquired(self):
