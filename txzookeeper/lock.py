@@ -12,106 +12,96 @@ class Lock(object):
     prefix = "lock-"
 
     def __init__(self, path, client):
-        self.path = path
-        self.client = client
+        self._path = path
+        self._client = client
         self._candidate_path = None
         self._acquired = False
-        self._acquire_deferred = None
+
+    @property
+    def path(self):
+        """Return the path to the lock."""
+        return self._path
 
     @property
     def locked(self):
+        """Has the lock been acquired."""
         return self._acquired
 
     def acquire(self):
-        """
-        Acquire the lock.
-        """
+        """Acquire the lock."""
+
         if self._acquired:
             raise ValueError("Already holding the lock %s"%(self.path))
 
-        if self._acquire_deferred:
+        if self._candidate_path is not None:
             raise ValueError("Already attempting to acquire the lock")
 
-        def on_candidate_create(candidate_path):
-            self._candidate_path = candidate_path
-            return self._acquire()
+        self._candidate_path = ""
 
-        # create our candidate node in the lock directory
-        d = self.client.create(
+        acquire_deferred = Deferred()
+
+        # Create our candidate node in the lock directory.
+        d = self._client.create(
             "/".join((self.path, self.prefix)),
             flags=zookeeper.EPHEMERAL|zookeeper.SEQUENCE)
 
+        def on_candidate_create(path):
+            self._candidate_path = path
+            return self._acquire(acquire_deferred, nearest_watcher)
+
         d.addCallback(on_candidate_create)
+
+        # Define our watcher as a closure with access to the acquire deferred.
+        def nearest_watcher(*args):
+            if not self._acquired:
+                return self._acquire(acquire_deferred, nearest_watcher)
+
+        return acquire_deferred
+
+    def _acquire(self, acquire_deferred, watcher):
+        d = self._client.get_children(self.path)
+        d.addCallback(self._check_candidate_nodes, acquire_deferred, watcher)
         return d
 
-    def _acquire(self):
+    def _check_candidate_nodes(self, children, acquire_deferred, watcher):
         """
-        An implementation of the distributed lock zookeeper recipe.
+        Check if our lock attempt candidate path is the best candidate
+        among the set of list of children names. If it is then fire the
+        acquire deferred. If its not then use the given watcher on the
+        nearest candidate name to our candidate.
         """
-        d = self.client.get_children(self.path)
+        candidate_name = self._candidate_path[
+            self._candidate_path.rfind('/')+1:]
 
-        def check_candidate_nodes(children):
-            candidate_name = self._candidate_path[
-                self._candidate_path.rfind('/')+1:]
+        # check to see if our node is the best candidate
+        children.sort()
+        assert candidate_name in children
+        index = children.index(candidate_name)
 
-            # check to see if our node is the best candidate
-            children.sort()
-            assert candidate_name in children
-            index = children.index(candidate_name)
+        # if yes, we have acquired the lock
+        if index == 0:
+            self._acquired = True
+            return acquire_deferred.callback(self)
 
-            # if yes, we have acquired the lock
-            if index == 0:
-                self._acquired = True
-                if self._acquire_deferred:
-                    acquire_deferred = self._acquire_deferred
-                    self._acquire_deferred = None
-                    return acquire_deferred.callback(self)
-                return self
+        # and if it changes, we attempt to reacquire the lock
+        return self._client.exists(
+            "/".join((self.path, children[index-1])), watcher)
 
-            # if no, we watch the nearest other candidate
-            if self._acquire_deferred is None:
-                self._acquire_deferred = Deferred()
-
-            # and if it changes, we attempt to reacquire the lock
-            self.client.exists(
-                "/".join((self.path, children[index-1])),
-                self._acquire_nearest_candidate_watch)
-
-            return self._acquire_deferred
-
-        d.addCallback(check_candidate_nodes)
-        return d
-
-    def _acquire_nearest_candidate_watch(self, event, state, path):
-        print "fired"
-        if self._acquire_deferred is None:
-            # if we allow timeouts this might happen at least verify
-            # that our instance state is sane.
-            assert not self._candidate_path, "Watcher on bad acquiring lock."
-            return
-        print "reacquire"
-        return self._acquire()
-
-    def release(self, acquiring=False):
+    def release(self):
         """
         Release the lock. If acquiring is True, an in progress acquiring
         attempt will be halted.
         """
 
-        if not self._acquired and not acquiring:
+        if not self._acquired:
             raise ValueError("Not holding lock %s"%(self.path))
 
-        d = self.client.delete(self._candidate_path)
-        self._candidate_path = None
+        d = self._client.delete(self._candidate_path)
 
         def on_delete_success(value):
             self._acquired = False
+            self._candidate_path = None
             return True
-
-        if self._acquire_deferred and acquiring:
-            self._acquire_deferred.errback(
-                ValueError("Lock acquire attempt released"))
-            self._acquire_deferred = None
 
         d.addCallback(on_delete_success)
         return d

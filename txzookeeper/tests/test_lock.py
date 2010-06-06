@@ -81,7 +81,7 @@ class LockTests(ZookeeperTestCase):
         self.assertRaises(ValueError, lock.acquire)
 
     @inlineCallbacks
-    def test_error_on_acquire_while_acquiring(self):
+    def xtest_error_on_acquire_while_acquiring(self):
         """
         If a lock instance is already attempting to acquire the lock,
         then trying to reacquire it is an error.
