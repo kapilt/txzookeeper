@@ -75,7 +75,7 @@ class QueueTests(ZookeeperTestCase):
         self.assertEqual(data, item)
 
     @inlineCallbacks
-    def test_qsize(self):
+    def xtest_qsize(self):
         """
         The client implements a method which returns an unreliable
         approximation of the number of items in the queue (mirrors api
@@ -106,7 +106,7 @@ class QueueTests(ZookeeperTestCase):
         """
         client = yield self.open_client()
         queue = Queue("/unused", client)
-        self.assertRaises(ValueError, queue.put, 123)
+        self.failUnlessFailure(queue.put(123), ValueError)
 
     @inlineCallbacks
     def test_get_with_invalid_queue(self):
@@ -116,8 +116,7 @@ class QueueTests(ZookeeperTestCase):
         """
         client = yield self.open_client()
         queue = Queue("/unused", client)
-        d = queue.get()
-        yield self.failUnlessFailure(d, NoNodeException)
+        yield self.failUnlessFailure(queue.put("abc"), NoNodeException)
 
     @inlineCallbacks
     def test_put_with_invalid_queue(self):

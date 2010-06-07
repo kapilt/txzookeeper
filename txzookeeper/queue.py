@@ -1,6 +1,11 @@
 """
 A distributed multiprocess queue.
 
+Implementation is based off the apache zookeeper Queue recipe. This
+implementation also uses a cache of child nodes. Its not clear what
+value the cache of children, as it effectively means the queue is
+constantly watching the queue node, and constantly receiving updates.
+
 There are some things to keep in mind when using zookeeper as a queue
 compared to a dedicated messaging service. An error condition in a queue
 processor must requeue the item, else its lost, as its removed from
@@ -20,7 +25,7 @@ Todo:
 
 import zookeeper
 
-from twisted.internet.defer import inlineCallbacks, returnValue, Deferred
+from twisted.internet.defer import Deferred, fail
 
 from client import ZOO_OPEN_ACL_UNSAFE
 
@@ -36,7 +41,6 @@ class Queue(object):
         if acl is None:
             acl = [ZOO_OPEN_ACL_UNSAFE]
         self._acl = acl
-        self._cached_entries = []
 
     @property
     def path(self):
@@ -54,14 +58,27 @@ class Queue(object):
         at the moment, a deferred is return that will fire when an item
         is available.
         """
-        return self._get()
+        # watcher for queue folder
+        def on_queue_items_changed(*args):
+            """Event watcher on queue node child events."""
+            if request.complete or not self._client.connected:
+                return
+
+            if request.processing:
+                request.refetch = True
+            else:
+                self._get(request)
+
+        request = GetRequest(Deferred(), on_queue_items_changed)
+        self._get(request)
+        return request.deferred
 
     def put(self, item):
         """
         Put an item into the queue.
         """
         if not isinstance(item, str):
-            raise ValueError("queue items must be strings")
+            return fail(ValueError("queue items must be strings"))
 
         flags = zookeeper.SEQUENCE
         if not self._persistent:
@@ -84,117 +101,68 @@ class Queue(object):
         d.addCallback(on_success)
         return d
 
-    def _refill(self):
-        """
-        Refetch the queue children, setting a watch as needed, and invalidating
-        any previous children entries queue.
-
-        If wait is True, then a deferred is return if no items are available
-        after the refill, which chained to a watcher to trigger, and triggers
-        when the children of the queue have changed. If there are no children
-        available it will recurse.
-        """
-        d = None
-
-        children_changed = Deferred()
-
-        def on_queue_items_changed(*args):
-            """Event watcher on queue node child events."""
-            if not self._client.connected:
-                return
-
-            # refill cache
-            after_refill = self._refill()
-
-            # notify any waiting
-            def notify_waiting(value):
-                children_changed.callback(None)
-
-            after_refill.addCallback(notify_waiting)
-
-        d = self._client.get_children(
-            self._path, on_queue_items_changed)
-
-        def on_success(children):
-            self._cached_entries = children
-            self._cached_entries.sort()
-
-            if not self._cached_entries:
-                return children_changed
-
-        def on_error(failure):
-            # if no node error on get children than our queue has been
-            # destroyed or was never created.
-            failure.trap(zookeeper.NoNodeException)
-            if not self._client.connected:
-                return
-            raise zookeeper.NoNodeException(
-                "Queue node doesn't exist %s"%self._path)
-
-        d.addCallback(on_success)
-        d.addErrback(on_error)
+    def _get(self, request):
+        d = self._client.get_children(self._path, request.watcher)
+        d.addCallback(self._get_item, request)
         return d
 
-    def _get_item(self, name):
-        """
-        Fetch the node data in the queue directory for the given node name. The
-        wait boolean argument is passed only to restart the get.
-        """
-        d = self._client.get("/".join((self._path, name)))
+    def _get_item(self, children, request):
 
-        def on_success(data):
-            # on nested _get calls we get back just the data versus a result of
-            # client.get.
-            if not isinstance(data, tuple):
-                return data
-            return data[0]
+        if not children:
+            return
 
-        def on_no_node(failure):
-            # If another consumer got the node, fetch another node.
-            failure.trap(zookeeper.NoNodeException)
+        request.processing = True
 
-            # We process our entire node cache before attempting to refill.
-            if self._cached_entries:
-                return self._get_item(self._cached_entries.pop())
+        def fetch_node(name):
+            path = "/".join((self._path, name))
+            d = self._client.get(path)
+            d.addCallback(on_get_node_success)
+            d.addErrback(on_no_node_error)
+            return d
 
-            # If the cache is empty, restart the get. Fairly rare.
-            return self._get() # 2pragma2: no cover
+        def on_get_node_success((data, stat)):
+            d = self._client.delete("/".join((self._path, name)))
+            d.addCallback(on_delete_node_success, data)
+            d.addErrback(on_no_node_error)
+            return d
 
-        d.addErrback(on_no_node)
-        d.addCallback(on_success)
-        return d
-
-    @inlineCallbacks
-    def _get(self):
-        """
-        Get and remove an item from the queue. If no item is available
-        an Empty exception is raised. If wait is True, a deferred
-        that fires only when an item has been retrieved is returned.
-        """
-
-        if not self._cached_entries:
-            yield self._refill()
-
-        name = self._cached_entries.pop(0)
-        d = self._get_item(name)
+        def on_delete_node_success(result_code, data):
+            request.processing = False
+            request.callback(data)
 
         def on_no_node_error(failure):
-            # if another consumer got the node, fetch another
             failure.trap(zookeeper.NoNodeException)
-            return self._get()
+            if children:
+                name = children.pop(0)
+                return fetch_node(name)
+            # Refetching deferred until we process all the children from
+            # from a get children call.
+            if request.refetch:
+                request.processing = False
+                return self._get(request)
 
-        def on_success_remove(data):
-            after_delete = self._client.delete("/".join((self._path, name)))
+        children.sort()
+        name = children.pop(0)
+        return fetch_node(name)
 
-            def on_success(delete_result):
-                return data
 
-            after_delete.addCallback(on_success)
-            after_delete.addErrback(on_no_node_error)
-            return after_delete
+class GetRequest(object):
+    """
+    A request to fetch an item of the queue.
+    """
 
-        d.addCallback(on_success_remove)
-        d.addErrback(on_no_node_error)
+    def __init__(self, deferred, watcher):
+        self.deferred = deferred
+        self.watcher = watcher
+        self.processing = False
+        self.refetch = False
 
-        data = yield d
-        returnValue(data)
+    @property
+    def complete(self):
+        return self.deferred.called
+
+    def callback(self, data):
+        self.deferred.callback(data)
+
+    def errback(self, error):
+        self.deferred.errback(error)
