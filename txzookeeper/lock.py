@@ -81,7 +81,8 @@ class Lock(object):
         # if yes, we have acquired the lock
         if index == 0:
             self._acquired = True
-            return acquire_deferred.callback(self)
+            acquire_deferred.callback(self)
+            return
 
         # and if it changes, we attempt to reacquire the lock
         return self._client.exists(
