@@ -79,44 +79,7 @@ class LockTests(ZookeeperTestCase):
         lock = Lock(path, client)
         yield lock.acquire()
         self.assertEqual(lock.locked, True)
-        self.assertRaises(ValueError, lock.acquire)
-
-    @inlineCallbacks
-    def test_error_on_acquire_while_acquiring(self):
-        """
-        If a lock instance is already attempting to acquire the lock,
-        then trying to reacquire it is an error.
-        """
-        client = yield self.open_client()
-        lock_dir = yield client.create("/lock-test")
-        lock = Lock(lock_dir, client)
-
-        # create a fake candidate so the lock can't acquire.
-        yield client.create(
-            "/lock-test/%s"%(lock.prefix),
-            flags=zookeeper.EPHEMERAL|zookeeper.SEQUENCE)
-        children = yield client.get_children("/lock-test")
-        self.assertTrue(len(children))
-
-        # this won't ever acquire because of the above node
-        # but we need to give it a moment to attempt it.
-        mock_lock = self.mocker.patch(lock)
-        mock_lock._acquire(ANY, ANY)
-        acquire_deferred = Deferred()
-        self.mocker.result(acquire_deferred)
-        self.mocker.replay()
-
-        d = lock.acquire()
-        from twisted.internet import reactor
-
-        def verify_acquire_while_acquiring():
-            self.assertRaises(ValueError, lock.acquire)
-            acquire_deferred.callback(None)
-
-        reactor.callLater(0.1, verify_acquire_while_acquiring)
-
-        self.failUnlessFailure(d, ValueError)
-        yield acquire_deferred
+        yield self.failUnlessFailure(lock.acquire(), ValueError)
 
     @inlineCallbacks
     def test_error_when_releasing_unacquired(self):
@@ -127,7 +90,7 @@ class LockTests(ZookeeperTestCase):
         client = yield self.open_client()
         lock_dir = yield client.create("/lock-multi-test")
         lock = Lock(lock_dir, client)
-        self.assertRaises(ValueError, lock.release)
+        self.failUnlessFailure(lock.release(), ValueError)
 
     @inlineCallbacks
     def test_multiple_acquiring_clients(self):
@@ -140,16 +103,8 @@ class LockTests(ZookeeperTestCase):
 
         yield lock.acquire()
         self.assertTrue(lock.locked)
-
         lock2_acquire = lock2.acquire()
-
-        from twisted.internet import reactor
-
-        def release_lock():
-            return lock.release()
-
-        reactor.callLater(0.1, release_lock)
-
+        yield lock.release()
         yield lock2_acquire
         self.assertTrue(lock2.locked)
         self.assertFalse(lock.locked)

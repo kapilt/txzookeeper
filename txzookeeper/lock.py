@@ -1,5 +1,5 @@
 import zookeeper
-from twisted.internet.defer import Deferred
+from twisted.internet.defer import Deferred, fail
 
 
 class Lock(object):
@@ -31,14 +31,14 @@ class Lock(object):
         """Acquire the lock."""
 
         if self._acquired:
-            raise ValueError("Already holding the lock %s"%(self.path))
+            error = ValueError("Already holding the lock %s"%(self.path))
+            return fail(error)
 
         if self._candidate_path is not None:
-            raise ValueError("Already attempting to acquire the lock")
+            error = ValueError("Already attempting to acquire the lock")
+            return fail(error) # pragma: no cover
 
         self._candidate_path = ""
-
-        acquire_deferred = Deferred()
 
         # Create our candidate node in the lock directory.
         d = self._client.create(
@@ -47,46 +47,61 @@ class Lock(object):
 
         def on_candidate_create(path):
             self._candidate_path = path
-            return self._acquire(acquire_deferred, nearest_watcher)
+            return self._acquire()
 
         d.addCallback(on_candidate_create)
 
-        # Define our watcher as a closure with access to the acquire deferred.
-        def nearest_watcher(*args):
-            if not self._acquired:
-                return self._acquire(acquire_deferred, nearest_watcher)
-
-        return acquire_deferred
-
-    def _acquire(self, acquire_deferred, watcher):
-        d = self._client.get_children(self.path)
-        d.addCallback(self._check_candidate_nodes, acquire_deferred, watcher)
         return d
 
-    def _check_candidate_nodes(self, children, acquire_deferred, watcher):
+    def _acquire(self, _ignored_deferred_argument=None):
+        d = self._client.get_children(self.path)
+        d.addCallback(self._check_candidate_nodes)
+        return d
+
+    def _check_candidate_nodes(self, children):
         """
         Check if our lock attempt candidate path is the best candidate
-        among the set of list of children names. If it is then fire the
-        acquire deferred. If its not then use the given watcher on the
-        nearest candidate name to our candidate.
+        among the list of children names. If it is then we hold the lock
+        if its not then watch the nearest candidate till it is.
         """
         candidate_name = self._candidate_path[
             self._candidate_path.rfind('/')+1:]
 
-        # check to see if our node is the best candidate
+        # Check to see if our node is the first candidate in the list.
         children.sort()
         assert candidate_name in children
         index = children.index(candidate_name)
 
-        # if yes, we have acquired the lock
         if index == 0:
+            # If our candidate is first, then we already have the lock.
             self._acquired = True
-            acquire_deferred.callback(self)
-            return
+            return self
 
-        # and if it changes, we attempt to reacquire the lock
-        return self._client.exists(
-            "/".join((self.path, children[index-1])), watcher)
+        # If someone else holds the lock, then wait until holder immediately
+        # before us releases the lock or dies.
+        previous_path = "/".join((self.path, children[index-1]))
+        exists_deferred, watch_deferred = self._exists_and_watch(previous_path)
+        exists_deferred.addCallback(self._check_previous_owner_existence,
+                                     watch_deferred)
+        return exists_deferred
+
+    def _exists_and_watch(self, path):
+        watch_d = Deferred()
+        exists_d = self._client.exists(path, lambda *args:
+                                       watch_d.callback(args))
+        return exists_d, watch_d
+
+    def _check_previous_owner_existence(self, previous_owner_exists,
+                                        watch_deferred):
+        if not previous_owner_exists:
+            # Hah! It's actually already dead!  That was quick.  Note
+            # how we never use the watch deferred in this case.
+            return self._acquire() # pragma: no cover
+        else:
+            # Nope, there's someone ahead of us in the queue indeed. Let's
+            # wait for the watch to detect it went away.
+            watch_deferred.addCallback(self._acquire)
+            return watch_deferred
 
     def release(self):
         """
@@ -95,13 +110,14 @@ class Lock(object):
         """
 
         if not self._acquired:
-            raise ValueError("Not holding lock %s"%(self.path))
+            error = ValueError("Not holding lock %s"%(self.path))
+            return fail(error)
 
         d = self._client.delete(self._candidate_path)
 
         def on_delete_success(value):
-            self._acquired = False
             self._candidate_path = None
+            self._acquired = False
             return True
 
         d.addCallback(on_delete_success)
