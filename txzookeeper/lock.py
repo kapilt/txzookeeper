@@ -96,7 +96,7 @@ class Lock(object):
         if not previous_owner_exists:
             # Hah! It's actually already dead!  That was quick.  Note
             # how we never use the watch deferred in this case.
-            return self._acquire() # pragma: no cover
+            return self._acquire()
         else:
             # Nope, there's someone ahead of us in the queue indeed. Let's
             # wait for the watch to detect it went away.

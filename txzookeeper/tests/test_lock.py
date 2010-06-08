@@ -121,6 +121,36 @@ class LockTests(ZookeeperTestCase):
         yield test_deferred
 
     @inlineCallbacks
+    def test_no_previous_owner_bypasses_watch(self):
+        """
+        Coverage test.  Internally the lock algorithm checks and sets a
+        watch on the nearest candidate node. If the node has been removed
+        between the time between the get_children and exists call, the we
+        immediately reattempt to get the lock without waiting on the watch.
+        """
+        client = yield self.open_client()
+        path = yield client.create("/lock-no-previous")
+
+        # setup the client to create the intended environment
+        mock_client = self.mocker.patch(client)
+        mock_client.create(ANY, flags=ANY)
+        self.mocker.result(succeed("%s/%s"%(path, "lock-3")))
+
+        mock_client.get_children(path)
+        self.mocker.result(succeed(["lock-2", "lock-3"]))
+
+        mock_client.exists("%s/%s"%(path, "lock-2"), ANY)
+        self.mocker.result(succeed(False))
+
+        mock_client.get_children(path)
+        self.mocker.result(succeed(["lock-3"]))
+        self.mocker.replay()
+
+        lock = Lock(path, mock_client)
+        yield lock.acquire()
+        self.assertTrue(lock.locked)
+
+    @inlineCallbacks
     def test_error_when_releasing_unacquired(self):
         """
         If an attempt is made to release a lock, that not currently being held,
