@@ -102,36 +102,33 @@ class Queue(object):
         return d
 
     def _get(self, request):
+        request.processing = True
         d = self._client.get_children(self._path, request.watcher)
         d.addCallback(self._get_item, request)
         return d
 
     def _get_item(self, children, request):
 
-        if not children:
-            return
-
-        request.processing = True
-
         def fetch_node(name):
             path = "/".join((self._path, name))
             d = self._client.get(path)
             d.addCallback(on_get_node_success)
-            d.addErrback(on_no_node_error)
+            d.addErrback(on_no_node)
             return d
 
         def on_get_node_success((data, stat)):
             d = self._client.delete("/".join((self._path, name)))
             d.addCallback(on_delete_node_success, data)
-            d.addErrback(on_no_node_error)
+            d.addErrback(on_no_node)
             return d
 
         def on_delete_node_success(result_code, data):
             request.processing = False
             request.callback(data)
 
-        def on_no_node_error(failure):
-            failure.trap(zookeeper.NoNodeException)
+        def on_no_node(failure=None):
+            if failure:
+                failure.trap(zookeeper.NoNodeException)
             if children:
                 name = children.pop(0)
                 return fetch_node(name)
@@ -141,6 +138,9 @@ class Queue(object):
             if request.refetch:
                 return self._get(request)
 
+        if not children:
+            return on_no_node()
+
         children.sort()
         name = children.pop(0)
         return fetch_node(name)
@@ -149,6 +149,8 @@ class Queue(object):
 class GetRequest(object):
     """
     A request to fetch an item of the queue.
+
+    @refetch - boolean field, set to true when a watch fires while we're
     """
 
     def __init__(self, deferred, watcher):
