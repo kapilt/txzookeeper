@@ -1,26 +1,9 @@
 """
-A distributed multiprocess queue.
-
-Implementation is based off the apache zookeeper Queue recipe. This
-implementation also uses a cache of child nodes. Its not clear what
-value the cache of children, as it effectively means the queue is
-constantly watching the queue node, and constantly receiving updates.
-
-There are some things to keep in mind when using zookeeper as a queue
-compared to a dedicated messaging service. An error condition in a queue
-processor must requeue the item, else its lost, as its removed from
-zookeeper on retrieval in this implementation. This implementation more
-closely mirrors the behavior and api of standard library Queue, ableit
-with the caveat of only strings for queue items.
-
-Todo:
+Several distributed multiprocess queue implementations.
 
  -implement Queue.join.
  -implement Sized queues.
  -message queue application as queue composite with dedicated processes.
-
- - one failing of the current implementation, is if the queue itself is
-   transient, waiting gets won't ever be invoked if the queue is deleted.
 """
 
 import zookeeper
@@ -31,7 +14,18 @@ from client import ZOO_OPEN_ACL_UNSAFE
 
 
 class Queue(object):
+    """
+    Implementation is based off the apache zookeeper Queue recipe.
 
+    There are some things to keep in mind when using this queue implementation.
+    Its primarily to enforce isolation and concurrent access, however it does
+    not provide for reliable consumption.  An error condition in a queue
+    consumer must requeue the item, else its lost, as its removed from
+    zookeeper on retrieval in this implementation. This implementation more
+    closely mirrors the behavior and api of the pythonstandard library Queue,
+    or multiprocessing.Queue ableit with the caveat of only strings for queue
+    items.
+    """
     _prefix = "entry-"
 
     def __init__(self, path, client, acl=None, persistent=False):
@@ -148,9 +142,14 @@ class Queue(object):
 
 class GetRequest(object):
     """
-    A request to fetch an item of the queue.
+    An encapsulation of a consumer request to fetch an item from the queue.
 
-    @refetch - boolean field, set to true when a watch fires while we're
+    @refetch - boolean field, when true signals that children should be
+               refetched after processing the current set of children.
+
+    @watcher -The child watcher.
+
+    @processing - When the queue
     """
 
     def __init__(self, deferred, watcher):
@@ -168,3 +167,80 @@ class GetRequest(object):
 
     def errback(self, error):
         self.deferred.errback(error)
+
+
+class QueueItem(object):
+
+    def __init__(self, path, data, client):
+        self.path = path
+        self.data = data
+        self._client = client
+
+    def delete(self):
+        return self._client.delete(self.path)
+
+
+class ReliableQueue(Queue):
+    """
+    A distributed queue. It varies from a C{Queue} in that it ensures any
+    item consumed from the queue is explicitly ack'd by the consumer,
+    else if the consumer dies, the item will be made available to another
+    consumer. To encapsulate the acking behavior the quee item data is
+    returned in a C{QueueItem} instance.
+    """
+
+    def _filter_children(self, children):
+        """
+        Filter any children currently being processed
+        """
+        children.sort()
+        for name in list(children):
+            if name.endswith("-processing"):
+                index = children.index(name)
+                children.pop(index)
+                children.pop(index-1)
+
+    def _get_item(self, children, request):
+
+        def fetch_node(name):
+            path = "/".join((self._path, name))
+            d = self._client.get(path)
+            d.addCallback(on_get_node_success, path)
+            d.addErrback(on_no_node)
+            return d
+
+        def on_get_node_success((data, stat), path):
+            d = self._client.create(
+                "/".join(self._path, name)+"-processing")
+            d.addCallback(on_create_processing_success, path, data)
+            d.addErrback(on_no_node)
+            return d
+
+        def on_create_processing_success(result_code, path, data):
+            request.processing = False
+            request.callback(QueueItem(path, data, self._client))
+
+        def on_no_node(failure=None):
+            if failure:
+                failure.trap(zookeeper.NoNodeException)
+            if children:
+                name = children.pop(0)
+                return fetch_node(name)
+            # Refetching deferred until we process all the children from
+            # from a get children call.
+            request.processing = False
+            if request.refetch:
+                return self._get(request)
+
+        children = self._filter_children(children)
+        if not children:
+            return on_no_node()
+
+        name = children.pop(0)
+        return fetch_node(name)
+
+
+class SerializedQueue(Queue):
+    """
+    A synchronized queue, has all items processed in order, 
+    """
