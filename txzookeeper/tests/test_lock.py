@@ -1,6 +1,4 @@
 
-import zookeeper
-
 from mocker import ANY
 from twisted.internet.defer import (
     inlineCallbacks, returnValue, Deferred, succeed)
@@ -49,7 +47,7 @@ class LockTests(ZookeeperTestCase):
         path = yield client.create("/lock-test")
         lock = Lock(path, client)
         yield lock.acquire()
-        self.assertEqual(lock.locked, True)
+        self.assertEqual(lock.acquired, True)
         released = yield lock.release()
         self.assertEqual(released, True)
 
@@ -62,13 +60,13 @@ class LockTests(ZookeeperTestCase):
         path = yield client.create("/lock-test")
         lock = Lock(path, client)
         yield lock.acquire()
-        self.assertTrue(lock.locked)
+        self.assertTrue(lock.acquired)
         yield lock.release()
-        self.assertFalse(lock.locked)
+        self.assertFalse(lock.acquired)
         yield lock.acquire()
-        self.assertTrue(lock.locked)
+        self.assertTrue(lock.acquired)
         yield lock.release()
-        self.assertFalse(lock.locked)
+        self.assertFalse(lock.acquired)
 
     @inlineCallbacks
     def test_error_on_double_acquire(self):
@@ -79,7 +77,7 @@ class LockTests(ZookeeperTestCase):
         path = yield client.create("/lock-test")
         lock = Lock(path, client)
         yield lock.acquire()
-        self.assertEqual(lock.locked, True)
+        self.assertEqual(lock.acquired, True)
         yield self.failUnlessFailure(lock.acquire(), ValueError)
 
     @inlineCallbacks
@@ -148,7 +146,7 @@ class LockTests(ZookeeperTestCase):
 
         lock = Lock(path, mock_client)
         yield lock.acquire()
-        self.assertTrue(lock.locked)
+        self.assertTrue(lock.acquired)
 
     @inlineCallbacks
     def test_error_when_releasing_unacquired(self):
@@ -171,9 +169,9 @@ class LockTests(ZookeeperTestCase):
         lock2 = Lock(lock_dir, client2)
 
         yield lock.acquire()
-        self.assertTrue(lock.locked)
+        self.assertTrue(lock.acquired)
         lock2_acquire = lock2.acquire()
         yield lock.release()
         yield lock2_acquire
-        self.assertTrue(lock2.locked)
-        self.assertFalse(lock.locked)
+        self.assertTrue(lock2.acquired)
+        self.assertFalse(lock.acquired)

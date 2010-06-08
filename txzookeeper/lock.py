@@ -23,7 +23,7 @@ class Lock(object):
         return self._path
 
     @property
-    def locked(self):
+    def acquired(self):
         """Has the lock been acquired."""
         return self._acquired
 
