@@ -137,8 +137,8 @@ class Queue(object):
                 return fetch_node(name)
             # Refetching deferred until we process all the children from
             # from a get children call.
+            request.processing = False
             if request.refetch:
-                request.processing = False
                 return self._get(request)
 
         children.sort()
