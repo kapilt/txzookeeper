@@ -36,7 +36,7 @@ class Lock(object):
 
         if self._candidate_path is not None:
             error = ValueError("Already attempting to acquire the lock")
-            return fail(error) # pragma: no cover
+            return fail(error)
 
         self._candidate_path = ""
 
@@ -53,7 +53,7 @@ class Lock(object):
 
         return d
 
-    def _acquire(self, _ignored_deferred_argument=None):
+    def _acquire(self):
         d = self._client.get_children(self.path)
         d.addCallback(self._check_candidate_nodes)
         return d

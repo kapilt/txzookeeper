@@ -2,7 +2,8 @@
 import zookeeper
 
 from mocker import ANY
-from twisted.internet.defer import inlineCallbacks, returnValue, Deferred
+from twisted.internet.defer import (
+    inlineCallbacks, returnValue, Deferred, succeed)
 
 from txzookeeper import ZookeeperClient
 from txzookeeper.lock import Lock
@@ -80,6 +81,44 @@ class LockTests(ZookeeperTestCase):
         yield lock.acquire()
         self.assertEqual(lock.locked, True)
         yield self.failUnlessFailure(lock.acquire(), ValueError)
+
+    @inlineCallbacks
+    def test_error_on_acquire_acquiring(self):
+        """
+        Attempting to acquire the lock while an attempt is already in progress,
+        raises a ValueError.
+        """
+        client = yield self.open_client()
+        path = yield client.create("/lock-test")
+        lock = Lock(path, client)
+
+        # setup the client to create the intended environment
+        mock_client = self.mocker.patch(client)
+        mock_client.create(ANY, flags=ANY)
+        self.mocker.result(succeed("%s/%s"%(path, "lock-3")))
+
+        mock_client.get_children("/lock-test")
+        self.mocker.result(succeed(["lock-2", "lock-3"]))
+
+        mock_client.exists("%s/%s"%(path, "lock-2"), ANY)
+        self.mocker.result(succeed(True))
+        self.mocker.replay()
+
+        # now we attempt to acquire the lock, rigged above to not succeed
+        lock.acquire()
+        test_deferred = Deferred()
+
+        # and next we schedule a lock attempt, which should fail as we're
+        # still attempting to acquire the lock.
+        def attempt_acquire():
+            self.failUnlessFailure(lock.acquire(), ValueError)
+            # after we've verified the error handling, end the test
+            test_deferred.callback(None)
+
+        from twisted.internet import reactor
+        reactor.callLater(0.1, attempt_acquire)
+
+        yield test_deferred
 
     @inlineCallbacks
     def test_error_when_releasing_unacquired(self):
