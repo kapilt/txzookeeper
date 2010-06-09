@@ -5,11 +5,13 @@ from twisted.internet.defer import (
 
 from txzookeeper import ZookeeperClient
 from txzookeeper.client import NotConnectedException
-from txzookeeper.queue import Queue
+from txzookeeper.queue import Queue, ReliableQueue, SerializedQueue
 from txzookeeper.tests import ZookeeperTestCase, utils
 
 
 class QueueTests(ZookeeperTestCase):
+
+    queue_factory = Queue
 
     def setUp(self):
         super(QueueTests, self).setUp()
@@ -47,7 +49,7 @@ class QueueTests(ZookeeperTestCase):
         The queue has a property that can be used to introspect its
         path in read only manner.
         """
-        q = Queue("/moon", None)
+        q = self.queue_factory("/moon", None)
         self.assertEqual(q.path, "/moon")
 
     def test_persistent_property(self):
@@ -55,7 +57,7 @@ class QueueTests(ZookeeperTestCase):
         The queue has a property that can be used to introspect
         whether or not the queue entries are persistent.
         """
-        q = Queue("/moon", None, persistent=True)
+        q = self.queue_factory("/moon", None, persistent=True)
         self.assertEqual(q.persistent, True)
 
     @inlineCallbacks
@@ -66,7 +68,7 @@ class QueueTests(ZookeeperTestCase):
         """
         client = yield self.open_client()
         path = yield client.create("/queue-test")
-        queue = Queue(path, client)
+        queue = self.queue_factory(path, client)
         item = "transform image bluemarble.jpg"
         yield queue.put(item)
         children = yield client.get_children(path)
@@ -85,7 +87,7 @@ class QueueTests(ZookeeperTestCase):
         """
         client = yield self.open_client()
         path = yield client.create("/test-qsize")
-        queue = Queue(path, client)
+        queue = self.queue_factory(path, client)
 
         yield queue.put("abc")
         size = yield queue.qsize()
@@ -105,7 +107,7 @@ class QueueTests(ZookeeperTestCase):
         The queue only accepts string items.
         """
         client = yield self.open_client()
-        queue = Queue("/unused", client)
+        queue = self.queue_factory("/unused", client)
         self.failUnlessFailure(queue.put(123), ValueError)
 
     @inlineCallbacks
@@ -115,7 +117,7 @@ class QueueTests(ZookeeperTestCase):
         on get.
         """
         client = yield self.open_client()
-        queue = Queue("/unused", client)
+        queue = self.queue_factory("/unused", client)
         yield self.failUnlessFailure(queue.put("abc"), NoNodeException)
 
     @inlineCallbacks
@@ -125,7 +127,7 @@ class QueueTests(ZookeeperTestCase):
         on put.
         """
         client = yield self.open_client()
-        queue = Queue("/unused", client)
+        queue = self.queue_factory("/unused", client)
         yield self.failUnlessFailure(queue.put("abc"), NoNodeException)
 
     @inlineCallbacks
@@ -137,12 +139,12 @@ class QueueTests(ZookeeperTestCase):
         client = yield self.open_client()
         path = yield client.create("/queue-wait-test")
         item = "zebra moon"
-        queue = Queue(path, client)
+        queue = self.queue_factory(path, client)
         d = queue.get()
 
         @inlineCallbacks
         def push_item():
-            queue = Queue(path, client)
+            queue = self.queue_factory(path, client)
             yield queue.put("zebra moon")
 
         def verify_item_received(data):
@@ -171,7 +173,7 @@ class QueueTests(ZookeeperTestCase):
         def producer(item_count):
             from twisted.internet import reactor
             client = yield self.open_client()
-            queue = Queue(path, client)
+            queue = self.queue_factory(path, client)
 
             items = []
             producer_done = Deferred()
@@ -190,7 +192,7 @@ class QueueTests(ZookeeperTestCase):
         @inlineCallbacks
         def consumer(item_count):
             client = yield self.open_client()
-            queue = Queue(path, client)
+            queue = self.queue_factory(path, client)
             for i in range(item_count):
                 try:
                     data = yield queue.get()
@@ -227,7 +229,7 @@ class QueueTests(ZookeeperTestCase):
         @inlineCallbacks
         def producer(start, offset):
             client = yield self.open_client()
-            q = Queue(path, client)
+            q = self.queue_factory(path, client)
             for i in range(start, start+offset):
                 yield q.put(str(i))
                 produce_results.append(str(i))
@@ -235,7 +237,7 @@ class QueueTests(ZookeeperTestCase):
         @inlineCallbacks
         def consumer(max):
             client = yield self.open_client()
-            q = Queue(path, client)
+            q = self.queue_factory(path, client)
             attempts = range(max)
             for el in attempts:
                 value = yield q.get()
@@ -255,3 +257,9 @@ class QueueTests(ZookeeperTestCase):
         err = set(produce_results)-set(consume_results)
         self.assertFalse(err)
         self.assertEqual(len(consume_results), len(produce_results))
+
+
+class Bar(object):
+#class ReliableQueueTests(QueueTests):
+
+    queue_factory = ReliableQueue

@@ -130,6 +130,7 @@ class Queue(object):
             # from a get children call.
             request.processing = False
             if request.refetch:
+                request.refetch = False
                 return self._get(request)
 
         if not children:
