@@ -172,9 +172,17 @@ class GetRequest(object):
 class QueueItem(object):
 
     def __init__(self, path, data, client):
-        self.path = path
-        self.data = data
+        self._path = path
+        self._data = data
         self._client = client
+
+    @property
+    def data(self):
+        return self._data
+
+    @property
+    def path(self):
+        return self._path
 
     def delete(self):
         return self._client.delete(self.path)
@@ -183,10 +191,11 @@ class QueueItem(object):
 class ReliableQueue(Queue):
     """
     A distributed queue. It varies from a C{Queue} in that it ensures any
-    item consumed from the queue is explicitly ack'd by the consumer,
-    else if the consumer dies, the item will be made available to another
-    consumer. To encapsulate the acking behavior the quee item data is
-    returned in a C{QueueItem} instance.
+    item consumed from the queue is explicitly ack'd by the consumer.
+    If the consumer dies after retrieving an item before ack'ing the item.
+    The item will be made available to another consumer. To encapsulate the
+    acking behavior the queue item data is returned in a C{QueueItem} instance,
+    with a delete method that will remove it from the queue after processing.
     """
 
     def _filter_children(self, children):
@@ -240,7 +249,15 @@ class ReliableQueue(Queue):
         return fetch_node(name)
 
 
-class SerializedQueue(Queue):
+class SerializedQueue(ReliableQueue):
     """
-    A synchronized queue, has all items processed in order, 
+    An ordered serialized queue, has all items processed in order. Even if
+    multiple consumers are on a queue, only1 item may be processed at a time.
     """
+
+    def _filter_children(self, children):
+        children.sort()
+        for name in children:
+            if name.endswith('-processing'):
+                return []
+        return children
