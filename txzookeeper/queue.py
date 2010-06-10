@@ -228,14 +228,12 @@ class ReliableQueue(Queue):
                 item_name = name[:-len(suffix)]
                 if item_name in children:
                     children.remove(item_name)
-        return children
 
     def _get_item(self, children, request):
 
         def fetch_node(name):
             path = "/".join((self._path, name))
             d = self._client.get(path)
-
             d.addCallback(on_get_node_success, path)
             d.addErrback(on_reservation_failed)
             return d
@@ -268,7 +266,7 @@ class ReliableQueue(Queue):
                 request.refetch = False
                 return self._get(request)
 
-        children = self._filter_children(children)
+        self._filter_children(children)
 
         if not children:
             return on_reservation_failed()
@@ -294,4 +292,3 @@ class SerializedQueue(ReliableQueue):
             if name.endswith(suffix):
                 children[:] = []
                 break
-        return children
