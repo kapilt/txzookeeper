@@ -215,6 +215,12 @@ class ReliableQueue(Queue):
     The item will be made available to another consumer. To encapsulate the
     acking behavior the queue item data is returned in a C{QueueItem} instance,
     with a delete method that will remove it from the queue after processing.
+
+    Reliable queues may be persistent or transient. If the queue is durable,
+    than any item added to the queue must be processed in order to be removed.
+    If the queue is transient, then any jobs placed in the queue by a client
+    are removed when the client is closed, regardless of whether the job
+    has been processed or not.
     """
 
     def _filter_children(self, children, suffix="-processing"):
