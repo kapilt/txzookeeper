@@ -1,12 +1,14 @@
 
 from zookeeper import NoNodeException
 from twisted.internet.defer import (
-    inlineCallbacks, returnValue, DeferredList, Deferred)
+    inlineCallbacks, returnValue, DeferredList, Deferred, succeed, fail)
 
 from txzookeeper import ZookeeperClient
 from txzookeeper.client import NotConnectedException
-from txzookeeper.queue import Queue, ReliableQueue, SerializedQueue
+from txzookeeper.queue import Queue, ReliableQueue, SerializedQueue, QueueItem
 from txzookeeper.tests import ZookeeperTestCase, utils
+
+from mocker import ANY
 
 
 class QueueTests(ZookeeperTestCase):
@@ -27,6 +29,17 @@ class QueueTests(ZookeeperTestCase):
             if client.connected:
                 client.close()
         super(QueueTests, self).tearDown()
+
+    def compare_data(self, data, item):
+        if isinstance(item, QueueItem):
+            self.assertEqual(data, item.data)
+        else:
+            self.assertEqual(data, item)
+
+    def get_data(self, item):
+        if isinstance(item, QueueItem):
+            return item.data
+        return item
 
     @inlineCallbacks
     def open_client(self, credentials=None):
@@ -74,10 +87,10 @@ class QueueTests(ZookeeperTestCase):
         children = yield client.get_children(path)
         self.assertEqual(len(children), 1)
         data, stat = yield client.get("/".join((path, children[0])))
-        self.assertEqual(data, item)
+        self.compare_data(data, item)
 
     @inlineCallbacks
-    def xtest_qsize(self):
+    def test_qsize(self):
         """
         The client implements a method which returns an unreliable
         approximation of the number of items in the queue (mirrors api
@@ -138,26 +151,20 @@ class QueueTests(ZookeeperTestCase):
         """
         client = yield self.open_client()
         path = yield client.create("/queue-wait-test")
-        item = "zebra moon"
+        data = "zebra moon"
         queue = self.queue_factory(path, client)
         d = queue.get()
 
         @inlineCallbacks
         def push_item():
             queue = self.queue_factory(path, client)
-            yield queue.put("zebra moon")
-
-        def verify_item_received(data):
-            self.assertEqual(data, item)
-            return data
-
-        d.addCallback(verify_item_received)
+            yield queue.put(data)
 
         from twisted.internet import reactor
         reactor.callLater(0.1, push_item)
 
-        data = yield d
-        self.assertEqual(data, item)
+        item = yield d
+        self.compare_data(data, item)
 
     @inlineCallbacks
     def test_interleaved_multiple_consumers_wait(self):
@@ -196,6 +203,11 @@ class QueueTests(ZookeeperTestCase):
             for i in range(item_count):
                 try:
                     data = yield queue.get()
+                    if isinstance(data, QueueItem):
+                        item = data
+                        data = item.data
+                        yield item.delete()
+
                 except NotConnectedException:
                     # when the test closes, we need to catch this
                     # as one of the producers will likely hang.
@@ -209,7 +221,7 @@ class QueueTests(ZookeeperTestCase):
              producer(6)])
         # as soon as the producer and either consumer is complete than the test
         # is done. Thus the only assertion we can make is the result is the
-        # size of at the small consumer.
+        # size of at least the smallest consumer.
         self.assertTrue(len(results) >= 2)
 
     @inlineCallbacks
@@ -241,6 +253,10 @@ class QueueTests(ZookeeperTestCase):
             attempts = range(max)
             for el in attempts:
                 value = yield q.get()
+                if isinstance(value, QueueItem):
+                    item = value
+                    value = item.data
+                    yield item.delete()
                 consume_results.append(value)
             returnValue(True)
 
@@ -254,12 +270,90 @@ class QueueTests(ZookeeperTestCase):
         yield DeferredList(
             [consumer(8), consumer(8), consumer(4)])
 
-        err = set(produce_results)-set(consume_results)
+        err = set(produce_results)-set(map(self.get_data, consume_results))
         self.assertFalse(err)
+
         self.assertEqual(len(consume_results), len(produce_results))
 
 
-class Bar(object):
-#class ReliableQueueTests(QueueTests):
+class ReliableQueueTests(QueueTests):
 
     queue_factory = ReliableQueue
+
+    @inlineCallbacks
+    def test_unprocessed_item_reappears(self):
+        """
+        If a queue consumer exits before processing an item, then
+        the item will become visible to other queue consumers.
+        """
+        test_client = yield self.open_client()
+        path = yield test_client.create("/reliable-queue-test")
+
+        data = "rabbit stew"
+        queue = self.queue_factory(path, test_client)
+        yield queue.put(data)
+
+        test_client2 = yield self.open_client()
+        queue2 = self.queue_factory(path, test_client2)
+        item = yield queue2.get()
+        self.compare_data(data, item)
+
+        d = queue.get()
+        yield test_client2.close()
+
+        item = yield d
+        self.compare_data(data, item)
+
+    @inlineCallbacks
+    def test_processed_item_removed(self):
+        """
+        If a client processes an item, than that item is removed from the queue
+        permanently.
+        """
+        test_client = yield self.open_client()
+        path = yield test_client.create("/reliable-queue-test")
+
+        data = "rabbit stew"
+        queue = self.queue_factory(path, test_client)
+        yield queue.put(data)
+        item = yield queue.get()
+        self.compare_data(data, item)
+        yield item.delete()
+        yield test_client.close()
+
+        test_client2 = yield self.open_client()
+        children = yield test_client2.get_children(path)
+        self.assertFalse(bool(children))
+
+    @inlineCallbacks
+    def xtest_unexpected_error_during_reservation(self):
+        """
+        If an unexpected error occurs when reserving an item, the error is
+        passed up to the get deferred's errback method.
+        """
+        test_client = yield self.open_client()
+        path = yield test_client.create("/reliable-queue-test")
+
+        # setup the test scenario
+        mock_client = self.mocker.patch(test_client)
+        mock_client.get_children(path, ANY)
+        self.mocker.result(succeed(["entry-000000"]))
+
+        item_path = "%s/%s"%(path, "entry-000000")
+        mock_client.get(item_path)
+        error = fail(ValueError("moon"))
+        mock_client.result(error)
+        self.mocker.replay()
+
+        # odd behavior, this should return a failure, as above, but it returns
+        # None
+        res = mock_client.get(item_path)
+        assert res
+        d = self.queue_factory(path, mock_client).get()
+        self.failUnlessFailure(d, ValueError)
+        yield d
+
+
+class SerializedQueueTests(QueueTests):
+
+    queue_factory = SerializedQueue

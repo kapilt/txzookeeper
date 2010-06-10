@@ -56,7 +56,7 @@ class Queue(object):
         def on_queue_items_changed(*args):
             """Event watcher on queue node child events."""
             if request.complete or not self._client.connected:
-                return
+                return # pragma: no cover
 
             if request.processing:
                 request.refetch = True
@@ -121,11 +121,13 @@ class Queue(object):
             request.callback(data)
 
         def on_no_node(failure=None):
-            if failure:
-                failure.trap(zookeeper.NoNodeException)
+            if failure and not failure.check(zookeeper.NoNodeException):
+                request.errback(failure)
+                return
             if children:
                 name = children.pop(0)
                 return fetch_node(name)
+
             # Refetching deferred until we process all the children from
             # from a get children call.
             request.processing = False
@@ -150,7 +152,9 @@ class GetRequest(object):
 
     @watcher -The child watcher.
 
-    @processing - When the queue
+    @processing - When the last known children of the queue are being processed
+
+    @deferred - The deferred representing retrieving an item from the queue.
     """
 
     def __init__(self, deferred, watcher):
@@ -171,6 +175,12 @@ class GetRequest(object):
 
 
 class QueueItem(object):
+    """
+    An encapsulation of a work item put into a queue. The work item data is
+    accessible via the data attribute. When the item has been processed by
+    the consumer, the delete method can be invoked to remove the item
+    permanently from the queue.
+    """
 
     def __init__(self, path, data, client):
         self._path = path
@@ -186,7 +196,15 @@ class QueueItem(object):
         return self._path
 
     def delete(self):
-        return self._client.delete(self.path)
+        """
+        Delete the item node and the item processing node in the queue.
+        Typically invoked by a queue consumer, to signal succesful processing
+        of the queue item.
+        """
+        d = self._client.delete(self.path)
+        d.addCallback(
+            lambda result_code: self._client.delete(self.path+"-processing"))
+        return d
 
 
 class ReliableQueue(Queue):
@@ -199,52 +217,61 @@ class ReliableQueue(Queue):
     with a delete method that will remove it from the queue after processing.
     """
 
-    def _filter_children(self, children):
+    def _filter_children(self, children, suffix="-processing"):
         """
-        Filter any children currently being processed
+        Filter any children currently being processed, modified in place.
         """
         children.sort()
         for name in list(children):
-            if name.endswith("-processing"):
-                index = children.index(name)
-                children.pop(index)
-                children.pop(index-1)
+            if name.endswith(suffix):
+                children.remove(name)
+                item_name = name[:-len(suffix)]
+                if item_name in children:
+                    children.remove(item_name)
+        return children
 
     def _get_item(self, children, request):
 
         def fetch_node(name):
             path = "/".join((self._path, name))
             d = self._client.get(path)
+
             d.addCallback(on_get_node_success, path)
-            d.addErrback(on_no_node)
+            d.addErrback(on_reservation_failed)
             return d
 
         def on_get_node_success((data, stat), path):
-            d = self._client.create(
-                "/".join(self._path, name)+"-processing")
-            d.addCallback(on_create_processing_success, path, data)
-            d.addErrback(on_no_node)
+            d = self._client.create(path+"-processing",
+                                    flags=zookeeper.EPHEMERAL)
+            d.addCallback(on_reservation_success, path, data)
+            d.addErrback(on_reservation_failed)
             return d
 
-        def on_create_processing_success(result_code, path, data):
+        def on_reservation_success(processing_path, path, data):
             request.processing = False
             request.callback(QueueItem(path, data, self._client))
 
-        def on_no_node(failure=None):
-            if failure:
-                failure.trap(zookeeper.NoNodeException)
+        def on_reservation_failed(failure=None):
+            if failure and not failure.check(
+                zookeeper.NodeExistsException, zookeeper.NoNodeException):
+                request.errback(failure)
+                return
+
             if children:
                 name = children.pop(0)
                 return fetch_node(name)
-            # Refetching deferred until we process all the children from
-            # from a get children call.
+
+            # If a watch fired while processing children, process it
+            # after the children list is exhausted.
             request.processing = False
             if request.refetch:
+                request.refetch = False
                 return self._get(request)
 
         children = self._filter_children(children)
+
         if not children:
-            return on_no_node()
+            return on_reservation_failed()
 
         name = children.pop(0)
         return fetch_node(name)
@@ -252,13 +279,19 @@ class ReliableQueue(Queue):
 
 class SerializedQueue(ReliableQueue):
     """
-    An ordered serialized queue, has all items processed in order. Even if
-    multiple consumers are on a queue, only1 item may be processed at a time.
+    A serialized queue ensures even with multiple consumers items are retrieved
+    and processed in the order they where placed in the queue. (TODO) An
+    implementation with less contention between consumers might instead utilize
+    a reliable queue with a lock.
     """
 
-    def _filter_children(self, children):
+    def _filter_children(self, children, suffix="-processing"):
+        """
+        Filter any children currently being processed, modified in place.
+        """
         children.sort()
-        for name in children:
-            if name.endswith('-processing'):
-                return []
+        for name in list(children):
+            if name.endswith(suffix):
+                children[:] = []
+                break
         return children
