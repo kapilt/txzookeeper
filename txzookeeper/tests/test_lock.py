@@ -4,7 +4,7 @@ from twisted.internet.defer import (
     inlineCallbacks, returnValue, Deferred, succeed)
 
 from txzookeeper import ZookeeperClient
-from txzookeeper.lock import Lock
+from txzookeeper.lock import Lock, LockError
 from txzookeeper.tests import ZookeeperTestCase, utils
 
 
@@ -78,13 +78,13 @@ class LockTests(ZookeeperTestCase):
         lock = Lock(path, client)
         yield lock.acquire()
         self.assertEqual(lock.acquired, True)
-        yield self.failUnlessFailure(lock.acquire(), ValueError)
+        yield self.failUnlessFailure(lock.acquire(), LockError)
 
     @inlineCallbacks
     def test_error_on_acquire_acquiring(self):
         """
         Attempting to acquire the lock while an attempt is already in progress,
-        raises a ValueError.
+        raises a LockError.
         """
         client = yield self.open_client()
         path = yield client.create("/lock-test")
@@ -109,7 +109,7 @@ class LockTests(ZookeeperTestCase):
         # and next we schedule a lock attempt, which should fail as we're
         # still attempting to acquire the lock.
         def attempt_acquire():
-            self.failUnlessFailure(lock.acquire(), ValueError)
+            self.failUnlessFailure(lock.acquire(), LockError)
             # after we've verified the error handling, end the test
             test_deferred.callback(None)
 
@@ -152,15 +152,19 @@ class LockTests(ZookeeperTestCase):
     def test_error_when_releasing_unacquired(self):
         """
         If an attempt is made to release a lock, that not currently being held,
-        than exception is raised.
+        than a C{LockError} exception is raised.
         """
         client = yield self.open_client()
         lock_dir = yield client.create("/lock-multi-test")
         lock = Lock(lock_dir, client)
-        self.failUnlessFailure(lock.release(), ValueError)
+        self.failUnlessFailure(lock.release(), LockError)
 
     @inlineCallbacks
     def test_multiple_acquiring_clients(self):
+        """
+        Multiple clients can compete for the lock, only one client's Lock
+        instance may hold the lock at any given moment.
+        """
         client = yield self.open_client()
         client2 = yield self.open_client()
         lock_dir = yield client.create("/lock-multi-test")

@@ -2,6 +2,12 @@ import zookeeper
 from twisted.internet.defer import Deferred, fail
 
 
+class LockError(Exception):
+    """
+    A usage or parameter exception that violated the lock conditions.
+    """
+
+
 class Lock(object):
     """
     A distributed exclusive lock, based on the apache zookeeper recipe.
@@ -24,18 +30,18 @@ class Lock(object):
 
     @property
     def acquired(self):
-        """Has the lock been acquired."""
+        """Has the lock been acquired. Returns a boolean"""
         return self._acquired
 
     def acquire(self):
         """Acquire the lock."""
 
         if self._acquired:
-            error = ValueError("Already holding the lock %s"%(self.path))
+            error = LockError("Already holding the lock %s"%(self.path))
             return fail(error)
 
         if self._candidate_path is not None:
-            error = ValueError("Already attempting to acquire the lock")
+            error = LockError("Already attempting to acquire the lock")
             return fail(error)
 
         self._candidate_path = ""
@@ -104,13 +110,10 @@ class Lock(object):
             return watch_deferred
 
     def release(self):
-        """
-        Release the lock. If acquiring is True, an in progress acquiring
-        attempt will be halted.
-        """
+        """Release the lock."""
 
         if not self._acquired:
-            error = ValueError("Not holding lock %s"%(self.path))
+            error = LockError("Not holding lock %s"%(self.path))
             return fail(error)
 
         d = self._client.delete(self._candidate_path)
