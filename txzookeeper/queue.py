@@ -58,8 +58,8 @@ class Queue(object):
             if request.complete or not self._client.connected:
                 return # pragma: no cover
 
-            if request.processing:
-                request.refetch = True
+            if request.processing_children:
+                request.refetch_children = True
             else:
                 self._get(request)
 
@@ -96,8 +96,8 @@ class Queue(object):
         return d
 
     def _get(self, request):
-        request.processing = True
-        d = self._client.get_children(self._path, request.watcher)
+        request.processing_children = True
+        d = self._client.get_children(self._path, request.child_watcher)
         d.addCallback(self._get_item, request)
         return d
 
@@ -117,7 +117,7 @@ class Queue(object):
             return d
 
         def on_delete_node_success(result_code, data):
-            request.processing = False
+            request.processing_children = False
             request.callback(data)
 
         def on_no_node(failure=None):
@@ -130,9 +130,9 @@ class Queue(object):
 
             # Refetching deferred until we process all the children from
             # from a get children call.
-            request.processing = False
-            if request.refetch:
-                request.refetch = False
+            request.processing_children = False
+            if request.refetch_children:
+                request.refetch_children = False
                 return self._get(request)
 
         if not children:
@@ -148,20 +148,23 @@ class GetRequest(object):
     An encapsulation of a consumer request to fetch an item from the queue.
 
     @refetch - boolean field, when true signals that children should be
-               refetched after processing the current set of children.
+    refetched after processing the current set of children.
 
-    @watcher -The child watcher.
+    @child_watcher -The queue child/item watcher.
 
-    @processing - When the last known children of the queue are being processed
+    @processing_children - Boolean flag, set to true when the last known
+    children of the queue are being processed. If a watch fires while the
+    children are being processed it sets the refetch_children flag to true
+    instead of getting the children immediately.
 
     @deferred - The deferred representing retrieving an item from the queue.
     """
 
     def __init__(self, deferred, watcher):
         self.deferred = deferred
-        self.watcher = watcher
-        self.processing = False
-        self.refetch = False
+        self.child_watcher = watcher
+        self.processing_children = False
+        self.refetch_children = False
 
     @property
     def complete(self):
@@ -252,7 +255,7 @@ class ReliableQueue(Queue):
             return d
 
         def on_reservation_success(processing_path, path, data):
-            request.processing = False
+            request.processing_children = False
             request.callback(QueueItem(path, data, self._client))
 
         def on_reservation_failed(failure=None):
@@ -267,9 +270,9 @@ class ReliableQueue(Queue):
 
             # If a watch fired while processing children, process it
             # after the children list is exhausted.
-            request.processing = False
-            if request.refetch:
-                request.refetch = False
+            request.processing_children = False
+            if request.refetch_children:
+                request.refetch_children = False
                 return self._get(request)
 
         self._filter_children(children)
