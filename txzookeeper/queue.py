@@ -52,15 +52,19 @@ class Queue(object):
         at the moment, a deferred is return that will fire when an item
         is available.
         """
-        # watcher for queue folder
+
         def on_queue_items_changed(*args):
             """Event watcher on queue node child events."""
             if request.complete or not self._client.connected:
                 return # pragma: no cover
 
             if request.processing_children:
+                # If deferred stack is currently processing a set of children
+                # defer refetching the children till its done.
                 request.refetch_children = True
             else:
+                # Else the item get request is just waiting for a watch,
+                # restart the get.
                 self._get(request)
 
         request = GetRequest(Deferred(), on_queue_items_changed)
