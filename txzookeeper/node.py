@@ -121,27 +121,15 @@ class ZNode(object):
         """Set the node's data."""
 
         def on_success(value):
+            self._node_stat = None
             if not self._node_exists:
                 self._node_exists = True
             return self
 
-        if self._node_exists:
-            version = self._get_version()
-            d = self._context.set(self.path, data, version)
-            d.addErrback(self._on_error_bad_version)
-            d.addCallback(on_success)
-            return d
-
-        d = self._context.create(self.path, data)
-
-        def on_error_node_exists(failure):
-            failure.trap(NodeExistsException)
-            version = self._get_version()
-            return self._context.set(self.path, data, version)
-
-        d.addCallback(on_success)
-        d.addErrback(on_error_node_exists)
+        version = self._get_version()
+        d = self._context.set(self.path, data, version)
         d.addErrback(self._on_error_bad_version)
+        d.addCallback(on_success)
         return d
 
     def get_acl(self):

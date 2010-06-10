@@ -56,15 +56,32 @@ class NodeTest(TestCase):
         self.assertFalse(exists)
 
     @inlineCallbacks
-    def test_node_set_data_create(self):
+    def test_node_set_data_on_nonexistant(self):
         """
-        Data can be set on a node, if the node doesn't exist,
-        setting its data creates the node.
+        Setting data on a non existant node raises a no node exception.
         """
         node = ZNode("/zoo/rabbit", self.client)
-        yield node.set_data("big furry ears")
+        d = node.set_data("big furry ears")
+        self.failUnlessFailure(d, zookeeper.NoNodeException)
+        yield d
+
+    @inlineCallbacks
+    def test_node_create_set_data(self):
+        """
+        A node can be created and have its data set.
+        """
+        node = ZNode("/zoo/rabbit", self.client)
+        data = "big furry ears"
+        yield node.create(data)
         exists = yield self.client.exists("/zoo/rabbit")
         self.assertTrue(exists)
+        node_data = yield node.get_data()
+        self.assertEqual(data, node_data)
+        data = data*2
+
+        yield node.set_data(data)
+        node_data = yield node.get_data()
+        self.assertEqual(data, node_data)
 
     @inlineCallbacks
     def test_node_get_data(self):
@@ -79,10 +96,11 @@ class NodeTest(TestCase):
     def test_node_get_data_nonexistant(self):
         """
         Attempting to fetch data from a nonexistant node returns
-        None.
+        a non existant error.
         """
-        data = yield ZNode("/zoo/giraffe", self.client).get_data()
-        self.assertEqual(data, None)
+        d = ZNode("/zoo/giraffe", self.client).get_data()
+        self.failUnlessFailure(d, zookeeper.NoNodeException)
+        yield d
 
     @inlineCallbacks
     def test_node_get_acl(self):
@@ -144,17 +162,17 @@ class NodeTest(TestCase):
     @inlineCallbacks
     def test_node_set_data_update_with_invalid_cached_exists(self):
         """
-        Data can be set on an existing node, updating it
-        in place.
+        If a node is deleted, attempting to set data on it
+        raises a no node exception.
         """
         node = ZNode("/zoo/monkey", self.client)
         yield self.client.create("/zoo/monkey", "stripes")
         exists = yield node.exists()
         self.assertTrue(exists)
         yield self.client.delete("/zoo/monkey")
-        yield node.set_data("banana")
-        data, stat = yield self.client.get("/zoo/monkey")
-        self.assertEqual(data, "banana")
+        d = node.set_data("banana")
+        self.failUnlessFailure(d, zookeeper.NoNodeException)
+        yield d
 
     @inlineCallbacks
     def test_node_set_data_update_with_exists(self):
