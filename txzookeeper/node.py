@@ -1,5 +1,6 @@
 from zookeeper import NoNodeException, NodeExistsException, BadVersionException
 from twisted.internet.defer import Deferred
+from txzookeeper.client import ZOO_OPEN_ACL_UNSAFE
 
 
 class ZNode(object):
@@ -12,11 +13,19 @@ class ZNode(object):
     """
 
     def __init__(self, path, context):
-        self.path = path
-        self.name = path.split("/")[-1]
+        self._path = path
+        self._name = path.split("/")[-1]
         self._context = context
         self._node_exists = None
         self._node_stat = None
+
+    @property
+    def path(self):
+        return self._path
+
+    @property
+    def name(self):
+        return self._name
 
     def _get_version(self):
         if not self._node_stat:
@@ -24,10 +33,26 @@ class ZNode(object):
         return self._node_stat["version"]
 
     def _on_error_bad_version(self, failure):
-        if isinstance(failure.value, BadVersionException):
-            self._node_exists = None
-            self._node_stat = None
-        return failure # pragma: no cover
+        failure.trap(BadVersionException)
+        self._node_exists = None
+        self._node_stat = None
+        return failure
+
+    def create(self, data="", acl=None, flags=0):
+        """
+        Create the node with the given data and acl. If no acl is given the
+        default public acl is used. Default node creation flag is persistent.
+        """
+        if acl is None:
+            acl = [ZOO_OPEN_ACL_UNSAFE]
+        d = self._context.create(self.path, data, acl, flags)
+
+        def _on_node_created(path):
+            self._node_exists = True
+            return path
+
+        d.addCallback(_on_node_created)
+        return d
 
     def _on_exists_success(self, node_stat):
         if node_stat is None:
@@ -59,10 +84,10 @@ class ZNode(object):
         return d, node_changed
 
     def _on_get_node_error(self, failure):
-        if isinstance(failure.value, NoNodeException):
-            self._node_exists = False
-            return
-        return failure # pragma: no cover
+        failure.trap(NoNodeException)
+        self._node_exists = False
+        self._node_stat = None
+        return failure
 
     def _on_get_node_success(self, data):
         (node_data, node_stat) = data
@@ -71,9 +96,7 @@ class ZNode(object):
         return node_data
 
     def get_data(self):
-        """
-        Retrieve the node's data.
-        """
+        """Retrieve the node's data."""
         d = self._context.get(self.path)
         d.addCallback(self._on_get_node_success)
         d.addErrback(self._on_get_node_error)
@@ -95,9 +118,7 @@ class ZNode(object):
         return d, node_changed
 
     def set_data(self, data):
-        """
-        Set the node's data.
-        """
+        """Set the node's data."""
 
         def on_success(value):
             if not self._node_exists:
@@ -105,16 +126,8 @@ class ZNode(object):
             return self
 
         if self._node_exists:
-            # if the node is deleted while we have this cached state we should
-            # covert the set to a create. XXX ??? Should we
-            def on_error_node_nonexistant(failure):
-                if isinstance(failure.value, NoNodeException):
-                    return self._context.create(self.path, data)
-                return failure # pragma: no cover
-
             version = self._get_version()
             d = self._context.set(self.path, data, version)
-            d.addErrback(on_error_node_nonexistant)
             d.addErrback(self._on_error_bad_version)
             d.addCallback(on_success)
             return d
@@ -122,10 +135,9 @@ class ZNode(object):
         d = self._context.create(self.path, data)
 
         def on_error_node_exists(failure):
-            if isinstance(failure.value, NodeExistsException):
-                version = self._get_version()
-                return self._context.set(self.path, data, version)
-            return failure # pragma: no cover
+            failure.trap(NodeExistsException)
+            version = self._get_version()
+            return self._context.set(self.path, data, version)
 
         d.addCallback(on_success)
         d.addErrback(on_error_node_exists)
