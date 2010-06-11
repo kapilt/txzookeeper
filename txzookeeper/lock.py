@@ -51,17 +51,22 @@ class Lock(object):
             "/".join((self.path, self.prefix)),
             flags=zookeeper.EPHEMERAL|zookeeper.SEQUENCE)
 
-        def on_candidate_create(path):
-            self._candidate_path = path
-            return self._acquire()
-
-        d.addCallback(on_candidate_create)
-
+        d.addCallback(self._on_candidate_create)
+        d.addErrback(self._on_no_queue_error)
         return d
 
-    def _acquire(self):
+    def _on_candidate_create(self, path):
+        self._candidate_path = path
+        return self._acquire()
+
+    def _on_no_queue_error(self, failure):
+        self._candidate_path = None
+        return failure
+
+    def _acquire(self, *args):
         d = self._client.get_children(self.path)
         d.addCallback(self._check_candidate_nodes)
+        d.addErrback(self._on_no_queue_error)
         return d
 
     def _check_candidate_nodes(self, children):
