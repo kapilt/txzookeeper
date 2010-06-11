@@ -1,9 +1,15 @@
 """
 Several distributed multiprocess queue implementations.
 
- -implement Queue.join.
- -implement Sized queues.
- -message queue application as queue composite with dedicated processes.
+The C{Queue} implementation follows closely the apache zookeeper recipe, it
+provides no guarantees beyond isolation and concurrency of retrieval of items.
+
+The C{ReliableQueue} implementation, provides isolation, and concurrency, as
+well guarantees that if a consumer dies before processing an item, that item is
+made available to another consumer.
+
+The C{SerializedQueue} implementation provides for strict in order processing
+of items within a queue.
 """
 
 import zookeeper
