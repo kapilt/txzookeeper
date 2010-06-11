@@ -31,6 +31,13 @@ class Queue(object):
     prefix = "entry-"
 
     def __init__(self, path, client, acl=None, persistent=False):
+        """
+        @param client: A connected C{ZookeeperClient} instance.
+        @param path: The path to the queue inthe zookeeper hierarchy.
+        @param acl: An acl to be used for queue items.
+        @param persistent: Boolean flag which denotes if items in the queue are
+        persistent.
+        """
         self._path = path
         self._client = client
         self._persistent = persistent
@@ -76,6 +83,8 @@ class Queue(object):
     def put(self, item):
         """
         Put an item into the queue.
+
+        @param item: String data to be put on the queue.
         """
         if not isinstance(item, str):
             return fail(ValueError("queue items must be strings"))
