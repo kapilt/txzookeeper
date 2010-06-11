@@ -269,6 +269,7 @@ class NodeTest(TestCase):
         event = yield watch
         self.assertEqual(event.path, "/zoo")
         self.assertEqual(event.type, zookeeper.CHILD_EVENT)
+        self.assertEqual(event.kind, "child")
 
     @inlineCallbacks
     def test_node_get_children_with_watch_delete(self):

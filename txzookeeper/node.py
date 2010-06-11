@@ -11,24 +11,35 @@ class NodeEvent(object):
     @ivar path: Path to the node the event was about.
 
     @ivar type: An integer corresponding to the event type. The symbolic
-    name mapping is available from the zookeeper module attributes.
+    name mapping is available from the zookeeper module attributes. For
+    convience one is included on the C{NodeEvent} class.
+
+    @ivar kind: A symbolic name for the event's type.
 
     @ivar connection_state: integer representing the state of the
     zookeeper connection.
-
-    Types of common events.
-       - DELETED_EVENT = 2
-       - CHANGED_EVENT = 3
-       - CREATED_EVENT = 1
-       - CHILD_EVENT = 4
     """
 
-    __slots__ = ('type', 'connection_state', 'path')
+    __slots__ = ('type', 'connection_state', 'path', 'node')
 
-    def __init__(self, event_type, connection_state, path):
+    kind_map = {
+        1: 'created',
+        2: 'deleted',
+        3: 'changed',
+        4: 'child'}
+
+    def __init__(self, event_type, connection_state, node):
         self.type = event_type
         self.connection_state = connection_state
-        self.path = path
+        self.node = node
+        self.path = node.path
+
+    @property
+    def kind(self):
+        return self.kind_map[self.type]
+
+    def __repr__(self):
+        return  "<NodeEvent %s at %s>"%(self.kind, self.path)
 
 
 class ZNode(object):
@@ -104,7 +115,7 @@ class ZNode(object):
 
         def on_node_event(event, state, path):
             return node_changed.callback(
-                NodeEvent(event, state, path))
+                NodeEvent(event, state, self))
 
         d = self._context.exists(self.path, on_node_event)
         d.addCallback(self._on_exists_success)
@@ -136,7 +147,7 @@ class ZNode(object):
 
         def on_node_change(event, status, path):
             node_changed.callback(
-                NodeEvent(event, status, path))
+                NodeEvent(event, status, self))
 
         d = self._context.get(self.path, watcher=on_node_change)
         d.addCallback(self._on_get_node_success)
@@ -207,7 +218,7 @@ class ZNode(object):
         def on_child_added_removed(event, status, path):
             # path is the container not the child.
             children_changed.callback(
-                NodeEvent(event, status, path))
+                NodeEvent(event, status, self))
 
         d = self._context.get_children(
             self.path, watcher=on_child_added_removed)
