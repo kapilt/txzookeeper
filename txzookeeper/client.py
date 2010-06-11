@@ -93,7 +93,7 @@ class ZookeeperClient(object):
             raise SyntaxError("invalid watcher")
         return self._zk_thread_callback(watcher)
 
-    def _zk_thread_callback(self, func, no_handle=False):
+    def _zk_thread_callback(self, func):
         """
         The client library invokes callbacks in a separate thread, we wrap
         any user defined callback so that they are called back in the main
@@ -101,10 +101,7 @@ class ZookeeperClient(object):
         """
 
         def wrapper(handle, *args): # pragma: no cover
-            if no_handle:
-                reactor.callFromThread(func, handle, *args)
-            else:
-                reactor.callFromThread(func, *args)
+            reactor.callFromThread(func, *args)
         return wrapper
 
     @property
@@ -341,13 +338,13 @@ class ZookeeperClient(object):
         self._check_connected()
         d = defer.Deferred()
 
-        def _cb_get_children(result_code, status, children):
+        def _cb_get_children(result_code, children):
             error = self._check_result(result_code, True)
             if error:
                 return d.errback(error)
             d.callback(children)
 
-        callback = self._zk_thread_callback(_cb_get_children, no_handle=True)
+        callback = self._zk_thread_callback(_cb_get_children)
         watcher = self._wrap_watcher(watcher)
         if watcher:
             # work around an a segfault issue with async get children and watch
@@ -407,13 +404,13 @@ class ZookeeperClient(object):
         self._check_connected()
         d = defer.Deferred()
 
-        def _cb_set_acl(result_code, *args):
+        def _cb_set_acl(result_code):
             error = self._check_result(result_code, True)
             if error:
                 return d.errback(error)
-            d.callback(args)
+            d.callback(result_code)
 
-        callback = self._zk_thread_callback(_cb_set_acl, no_handle=True)
+        callback = self._zk_thread_callback(_cb_set_acl)
         result = zookeeper.aset_acl(
             self.handle, path, version, acls, callback)
         self._check_result(result)

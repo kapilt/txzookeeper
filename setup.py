@@ -16,6 +16,7 @@ setup(
     url="https://launchpad.net/txzookeeper",
     license="MIT",
     packages=find_packages(),
+    test_suite="txzookeeper.tests.egg_test_runner",
     long_description=long_description,
     classifiers=[
         "Intended Audience :: Developers",

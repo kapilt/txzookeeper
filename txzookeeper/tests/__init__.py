@@ -10,8 +10,9 @@ class ZookeeperTestCase(TestCase, MockerTestCase):
         super(ZookeeperTestCase, self).setUp()
         self.log_file_path = self.makeFile()
         self.log_file = open(self.log_file_path, 'w')
-        zookeeper.set_log_stream(self.log_file)
+        #zookeeper.set_log_stream(self.log_file)
         zookeeper.set_debug_level(zookeeper.LOG_LEVEL_ERROR)
+        #zookeeper.set_debug_level(zookeeper.LOG_LEVEL_DEBUG)
 
     def tearDown(self):
         super(ZookeeperTestCase, self).tearDown()
@@ -21,3 +22,16 @@ class ZookeeperTestCase(TestCase, MockerTestCase):
 
     def get_log(self):
         return open(self.log_file_path).read()
+
+
+def egg_test_runner():
+    """
+    Test collector and runner for setup.py test
+    """
+    from twisted.scripts.trial import run
+    original_args = list(sys.argv)
+    sys.argv = ["", "txzookeeper"]
+    try:
+        return run()
+    finally:
+        sys.argv = original_args
