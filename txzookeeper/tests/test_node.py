@@ -198,8 +198,9 @@ class NodeTest(TestCase):
         exists, watch = yield node.exists_and_watch()
 
         self.client.create("/zoo/elephant")
-        event, state, path = yield watch
-        self.assertEqual(event, zookeeper.CREATED_EVENT)
+        event = yield watch
+        self.assertEqual(event.type, zookeeper.CREATED_EVENT)
+        self.assertEqual(event.path, node.path)
 
     @inlineCallbacks
     def test_node_get_data_with_watch_on_update(self):
@@ -211,9 +212,9 @@ class NodeTest(TestCase):
         node = ZNode("/zoo/elephant", self.client)
         data, watch = yield node.get_data_and_watch()
         yield self.client.set("/zoo/elephant")
-        event, state, path = yield watch
-        self.assertEqual(event, zookeeper.CHANGED_EVENT)
-        self.assertEqual(path, "/zoo/elephant")
+        event = yield watch
+        self.assertEqual(event.type, zookeeper.CHANGED_EVENT)
+        self.assertEqual(event.path, "/zoo/elephant")
 
     @inlineCallbacks
     def test_node_get_data_with_watch_on_delete(self):
@@ -226,9 +227,9 @@ class NodeTest(TestCase):
         data, watch = yield node.get_data_and_watch()
 
         yield self.client.delete("/zoo/elephant")
-        event, state, path = yield watch
-        self.assertEqual(event, zookeeper.DELETED_EVENT)
-        self.assertEqual(path, "/zoo/elephant")
+        event = yield watch
+        self.assertEqual(event.type, zookeeper.DELETED_EVENT)
+        self.assertEqual(event.path, "/zoo/elephant")
 
     @inlineCallbacks
     def test_node_children(self):
@@ -265,9 +266,9 @@ class NodeTest(TestCase):
         node = ZNode("/zoo", self.client)
         children, watch = yield node.get_children_and_watch()
         yield self.client.create("/zoo/lion")
-        event, state, path = yield watch
-        self.assertEqual(path, "/zoo")
-        self.assertEqual(event, zookeeper.CHILD_EVENT)
+        event = yield watch
+        self.assertEqual(event.path, "/zoo")
+        self.assertEqual(event.type, zookeeper.CHILD_EVENT)
 
     @inlineCallbacks
     def test_node_get_children_with_watch_delete(self):
@@ -279,9 +280,9 @@ class NodeTest(TestCase):
         yield self.client.create("/zoo/lion")
         children, watch = yield node.get_children_and_watch()
         yield self.client.delete("/zoo/lion")
-        event, state, path = yield watch
-        self.assertEqual(path, "/zoo")
-        self.assertEqual(event, zookeeper.CHILD_EVENT)
+        event = yield watch
+        self.assertEqual(event.path, "/zoo")
+        self.assertEqual(event.type, zookeeper.CHILD_EVENT)
 
     @inlineCallbacks
     def test_bad_version_error(self):
