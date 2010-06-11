@@ -353,3 +353,40 @@ class ReliableQueueTests(QueueTests):
 class SerializedQueueTests(ReliableQueueTests):
 
     queue_factory = SerializedQueue
+
+    @inlineCallbacks
+    def test_serialized_behavior(self):
+        """
+        The serialized queue behavior is such that even with multiple
+        consumers, items are processed in order.
+        """
+        test_client = yield self.open_client()
+        path = yield test_client.create("/serialized-queue-test")
+
+        queue = self.queue_factory(path, test_client, persistent=True)
+
+        yield queue.put("a")
+        yield queue.put("b")
+
+        test_client2 = yield self.open_client()
+        queue2 = self.queue_factory(path, test_client2, persistent=True)
+
+        d = queue2.get()
+
+        def on_get_item_sleep_and_close(item):
+            """Close the connection after we have the item."""
+            from twisted.internet import reactor
+            reactor.callLater(0.1, test_client2.close)
+            return item
+
+        d.addCallback(on_get_item_sleep_and_close)
+
+        # fetch the item from queue2
+        item1 = yield d
+        # fetch the item from queue1, this will not get "b", because client2 is
+        # still processing "a". When client2 closes its connection, client1
+        # will get item "a"
+        item2 = yield queue.get()
+
+        self.compare_data("a", item2)
+        self.assertEqual(item1.data, item2.data)
