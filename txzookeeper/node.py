@@ -1,4 +1,4 @@
-from zookeeper import NoNodeException, NodeExistsException, BadVersionException
+from zookeeper import NoNodeException, BadVersionException
 from twisted.internet.defer import Deferred
 from txzookeeper.client import ZOO_OPEN_ACL_UNSAFE
 
@@ -16,15 +16,20 @@ class ZNode(object):
         self._path = path
         self._name = path.split("/")[-1]
         self._context = context
-        self._node_exists = None
         self._node_stat = None
 
     @property
     def path(self):
+        """
+        The path to the node from the zookeeper root.
+        """
         return self._path
 
     @property
     def name(self):
+        """
+        The name of the node in its container.
+        """
         return self._name
 
     def _get_version(self):
@@ -34,30 +39,23 @@ class ZNode(object):
 
     def _on_error_bad_version(self, failure):
         failure.trap(BadVersionException)
-        self._node_exists = None
         self._node_stat = None
         return failure
 
     def create(self, data="", acl=None, flags=0):
         """
-        Create the node with the given data and acl. If no acl is given the
-        default public acl is used. Default node creation flag is persistent.
+        Create the node with the given data, acl, and persistence flags. If no
+        acl is given the default public acl is used. The default creation flag
+        is persistent.
         """
         if acl is None:
             acl = [ZOO_OPEN_ACL_UNSAFE]
         d = self._context.create(self.path, data, acl, flags)
-
-        def _on_node_created(path):
-            self._node_exists = True
-            return path
-
-        d.addCallback(_on_node_created)
         return d
 
     def _on_exists_success(self, node_stat):
         if node_stat is None:
             return False
-        self._node_exists = True
         self._node_stat = node_stat
         return True
 
@@ -85,13 +83,11 @@ class ZNode(object):
 
     def _on_get_node_error(self, failure):
         failure.trap(NoNodeException)
-        self._node_exists = False
         self._node_stat = None
         return failure
 
     def _on_get_node_success(self, data):
         (node_data, node_stat) = data
-        self._node_exists = True
         self._node_stat = node_stat
         return node_data
 
@@ -122,8 +118,6 @@ class ZNode(object):
 
         def on_success(value):
             self._node_stat = None
-            if not self._node_exists:
-                self._node_exists = True
             return self
 
         version = self._get_version()
@@ -140,7 +134,6 @@ class ZNode(object):
 
         def on_success((acl, stat)):
             if stat is not None:
-                self._node_exists = True
                 self._node_stat = stat
             return acl
         d = self._context.get_acl(self.path)
