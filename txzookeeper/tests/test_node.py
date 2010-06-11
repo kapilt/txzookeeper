@@ -284,6 +284,8 @@ class NodeTest(TestCase):
         event = yield watch
         self.assertEqual(event.path, "/zoo")
         self.assertEqual(event.type, zookeeper.CHILD_EVENT)
+        self.assertEqual(repr(event),
+                         "<NodeEvent child at '/zoo'>")
 
     @inlineCallbacks
     def test_bad_version_error(self):

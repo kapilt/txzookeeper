@@ -39,7 +39,7 @@ class NodeEvent(object):
         return self.kind_map[self.type]
 
     def __repr__(self):
-        return  "<NodeEvent %s at %s>"%(self.kind, self.path)
+        return  "<NodeEvent %s at %r>"%(self.kind, self.path)
 
 
 class ZNode(object):
