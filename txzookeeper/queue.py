@@ -27,7 +27,8 @@ class Queue(object):
     or multiprocessing.Queue ableit with the caveat of only strings for queue
     items.
     """
-    _prefix = "entry-"
+
+    prefix = "entry-"
 
     def __init__(self, path, client, acl=None, persistent=False):
         self._path = path
@@ -84,7 +85,7 @@ class Queue(object):
             flags = flags|zookeeper.EPHEMERAL
 
         d = self._client.create(
-            "/".join((self._path, self._prefix)), item, self._acl, flags)
+            "/".join((self._path, self.prefix)), item, self._acl, flags)
         return d
 
     def qsize(self):

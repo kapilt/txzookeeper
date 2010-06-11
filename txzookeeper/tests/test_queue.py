@@ -346,9 +346,10 @@ class ReliableQueueTests(QueueTests):
 
         test_client2 = yield self.open_client()
         children = yield test_client2.get_children(path)
+        children = [c for c in children if c.startswith(queue.prefix)]
         self.assertFalse(bool(children))
 
 
-class SerializedQueueTests(QueueTests):
+class SerializedQueueTests(ReliableQueueTests):
 
     queue_factory = SerializedQueue
