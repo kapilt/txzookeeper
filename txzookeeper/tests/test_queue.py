@@ -172,7 +172,7 @@ class QueueTests(ZookeeperTestCase):
     @inlineCallbacks
     def test_get_and_put(self):
         """
-        get can also be used on empty queues and returns a deferred that fires
+        Get can also be used on empty queues and returns a deferred that fires
         whenever an item is has been retrieved from the queue.
         """
         client = yield self.open_client()
@@ -195,8 +195,8 @@ class QueueTests(ZookeeperTestCase):
     @inlineCallbacks
     def test_interleaved_multiple_consumers_wait(self):
         """
-        Multiple consumers waiting (deferred block) on a queue works as
-        expected.
+        Multiple consumers and a producer adding and removing items on the
+        the queue concurrently.
         """
         test_client = yield self.open_client()
         path = yield test_client.create("/multi-consumer-wait-test")
