@@ -9,8 +9,9 @@ Several distributed multiprocess queue implementations.
 import zookeeper
 
 from twisted.internet.defer import Deferred, fail
-
-from client import ZOO_OPEN_ACL_UNSAFE
+from twisted.python.failure import Failure
+from txzookeeper.lock import Lock
+from txzookeeper.client import ZOO_OPEN_ACL_UNSAFE
 
 
 class Queue(object):
@@ -291,10 +292,15 @@ class ReliableQueue(Queue):
 class SerializedQueue(ReliableQueue):
     """
     A serialized queue ensures even with multiple consumers items are retrieved
-    and processed in the order they where placed in the queue. (TODO) An
-    implementation with less contention between consumers might instead utilize
-    a reliable queue with a lock.
+    and processed in the order they where placed in the queue.
+
+    This implementation aggregates a reliable queue, with a lock to provide
+    for serialized consumer access.
     """
+
+    def __init__(self, path, client, acl=None, persistent=False):
+        super(SerializedQueue, self).__init__(path, client, acl, persistent)
+        self._lock = Lock("%s/%s"%(self.path, "_lock"), client)
 
     def _filter_children(self, children, suffix="-processing"):
         """
@@ -302,6 +308,63 @@ class SerializedQueue(ReliableQueue):
         """
         children.sort()
         for name in list(children):
+            if name.startswith('_'):
+                children.remove(name)
+
             if name.endswith(suffix):
                 children[:] = []
-                break
+
+    def _on_lock_directory_does_not_exist(self, failure):
+        """
+        If the lock directory does not exist, go ahead and create it and
+        attempt to acquire the lock.
+        """
+        failure.trap(zookeeper.NoNodeException)
+        d = self._client.create(self._lock.path)
+        d.addBoth(self._on_lock_created_or_exists)
+        return d
+
+    def _on_lock_created_or_exists(self, failure):
+        """
+        The lock node creation will either result in success or node exists
+        error, if a concurrent client created the node first. In either case
+        we proceed with attempting to acquire the lock.
+        """
+        if isinstance(failure, Failure):
+            failure.trap(zookeeper.NodeExistsException)
+        d = self._lock.acquire()
+        return d
+
+    def _on_lock_acquired(self, lock):
+        """
+        After the exclusive queue lock is acquired, we proceed with an attempt
+        to fetch an item from the queue.
+        """
+        d = super(SerializedQueue, self).get()
+        d.addCallback(self._on_item_retrieved)
+        return d
+
+    def _on_item_retrieved(self, item):
+        """
+        After we've retrieved an item, we release the queue lock and return
+        the item.
+        """
+        lock_released = self._lock.release()
+
+        def on_lock_released(result):
+            return item
+
+        lock_released.addCallback(on_lock_released)
+        return lock_released
+
+    def get(self):
+        """
+        Get and remove an item from the queue. If no item is available
+        at the moment, a deferred is return that will fire when an item
+        is available.
+        """
+        d = self._lock.acquire()
+
+        d.addErrback(self._on_lock_directory_does_not_exist)
+        d.addCallback(self._on_lock_acquired)
+        return d
