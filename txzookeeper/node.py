@@ -22,7 +22,7 @@ class NodeEvent(object):
 
     __slots__ = ('type', 'connection_state', 'path', 'node')
 
-    kind_map = {
+    type_name_map = {
         1: 'created',
         2: 'deleted',
         3: 'changed',
@@ -35,11 +35,11 @@ class NodeEvent(object):
         self.path = node.path
 
     @property
-    def kind(self):
-        return self.kind_map[self.type]
+    def type_name(self):
+        return self.type_name_map[self.type]
 
     def __repr__(self):
-        return  "<NodeEvent %s at %r>"%(self.kind, self.path)
+        return  "<NodeEvent %s at %r>"%(self.type_name, self.path)
 
 
 class ZNode(object):

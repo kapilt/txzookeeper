@@ -2,7 +2,7 @@ import zookeeper
 import hashlib
 import base64
 
-from twisted.internet.defer import Deferred, inlineCallbacks
+from twisted.internet.defer import inlineCallbacks
 from twisted.python.failure import Failure
 from txzookeeper.node import ZNode
 from txzookeeper.tests import TestCase
@@ -269,7 +269,7 @@ class NodeTest(TestCase):
         event = yield watch
         self.assertEqual(event.path, "/zoo")
         self.assertEqual(event.type, zookeeper.CHILD_EVENT)
-        self.assertEqual(event.kind, "child")
+        self.assertEqual(event.type_name, "child")
 
     @inlineCallbacks
     def test_node_get_children_with_watch_delete(self):
