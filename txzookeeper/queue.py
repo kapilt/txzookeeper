@@ -204,12 +204,16 @@ class QueueItem(object):
     accessible via the data attribute. When the item has been processed by
     the consumer, the delete method can be invoked to remove the item
     permanently from the queue.
+
+    An optional processed callback maybe passed to the constructor that will
+    be invoked after the node has been processed.
     """
 
-    def __init__(self, path, data, client):
+    def __init__(self, path, data, client, processed_callback=None):
         self._path = path
         self._data = data
         self._client = client
+        self._processed_callback = processed_callback
 
     @property
     def data(self):
@@ -228,6 +232,8 @@ class QueueItem(object):
         d = self._client.delete(self.path)
         d.addCallback(
             lambda result_code: self._client.delete(self.path+"-processing"))
+        if self._processed_callback:
+            d.addCallback(self._processed_callback)
         return d
 
 
@@ -246,6 +252,8 @@ class ReliableQueue(Queue):
     are removed when the client is closed, regardless of whether the job
     has been processed or not.
     """
+
+    _item_processed_callback = None
 
     def _filter_children(self, children, suffix="-processing"):
         """
@@ -277,7 +285,9 @@ class ReliableQueue(Queue):
 
         def on_reservation_success(processing_path, path, data):
             request.processing_children = False
-            request.callback(QueueItem(path, data, self._client))
+            request.callback(
+                QueueItem(
+                    path, data, self._client, self._item_processed_callback))
 
         def on_reservation_failed(failure=None):
             if failure and not failure.check(
@@ -311,24 +321,25 @@ class SerializedQueue(ReliableQueue):
     and processed in the order they where placed in the queue.
 
     This implementation aggregates a reliable queue, with a lock to provide
-    for serialized consumer access.
+    for serialized consumer access. The lock is released only when a queue item
+    has been processed.
     """
 
     def __init__(self, path, client, acl=None, persistent=False):
         super(SerializedQueue, self).__init__(path, client, acl, persistent)
         self._lock = Lock("%s/%s"%(self.path, "_lock"), client)
 
+    def _item_processed_callback(self, r):
+        return self._lock.release()
+
     def _filter_children(self, children, suffix="-processing"):
         """
-        Filter any children currently being processed, modified in place.
+        Filter the lock from consideration as an item to be processed.
         """
         children.sort()
         for name in list(children):
             if name.startswith('_'):
                 children.remove(name)
-
-            if name.endswith(suffix):
-                children[:] = []
 
     def _on_lock_directory_does_not_exist(self, failure):
         """
@@ -357,21 +368,7 @@ class SerializedQueue(ReliableQueue):
         to fetch an item from the queue.
         """
         d = super(SerializedQueue, self).get()
-        d.addCallback(self._on_item_retrieved)
         return d
-
-    def _on_item_retrieved(self, item):
-        """
-        After we've retrieved an item, we release the queue lock and return
-        the item.
-        """
-        lock_released = self._lock.release()
-
-        def on_lock_released(result):
-            return item
-
-        lock_released.addCallback(on_lock_released)
-        return lock_released
 
     def get(self):
         """
