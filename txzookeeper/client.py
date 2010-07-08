@@ -346,13 +346,6 @@ class ZookeeperClient(object):
 
         callback = self._zk_thread_callback(_cb_get_children)
         watcher = self._wrap_watcher(watcher)
-        if watcher:
-            # work around an a segfault issue with async get children and watch
-            # effectively we use the synchronous api for this method.
-            # https://issues.apache.org/jira/browse/ZOOKEEPER-772
-            result = zookeeper.get_children(self.handle, path, watcher)
-            d.callback(result)
-            return d
         result = zookeeper.aget_children(self.handle, path, watcher, callback)
         self._check_result(result)
         return d
