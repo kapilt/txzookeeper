@@ -168,8 +168,8 @@ class GetRequest(object):
     """
     An encapsulation of a consumer request to fetch an item from the queue.
 
-    @refetch - boolean field, when true signals that children should be
-    refetched after processing the current set of children.
+    @refetch_children - boolean field, when true signals that children should
+    be refetched after processing the current set of children.
 
     @child_watcher -The queue child/item watcher.
 
@@ -230,8 +230,12 @@ class QueueItem(object):
         of the queue item.
         """
         d = self._client.delete(self.path)
-        d.addCallback(
-            lambda result_code: self._client.delete(self.path+"-processing"))
+
+        def on_node_delete(r):
+            return self._client.delete(self.path+"-processing")
+
+        d.addCallback(on_node_delete)
+
         if self._processed_callback:
             d.addCallback(self._processed_callback)
         return d
@@ -261,6 +265,7 @@ class ReliableQueue(Queue):
         """
         children.sort()
         for name in list(children):
+            # remove any processing nodes and their associated queue item.
             if name.endswith(suffix):
                 children.remove(name)
                 item_name = name[:-len(suffix)]
@@ -269,35 +274,54 @@ class ReliableQueue(Queue):
 
     def _get_item(self, children, request):
 
-        def fetch_node(name):
+        def check_node(name):
+            """Check the node still exists."""
             path = "/".join((self._path, name))
+            d = self._client.exists(path)
+            d.addCallback(on_node_exists, path)
+            d.addErrback(on_reservation_failed)
+            return d
+
+        def on_node_exists(stat, path):
+            """Reserve the node for consumer processing."""
+            d = self._client.create(path+"-processing",
+                                    flags=zookeeper.EPHEMERAL)
+            d.addCallback(on_reservation_success, path)
+            d.addErrback(on_reservation_failed)
+            return d
+
+        def on_reservation_success(processing_path, path):
+            """Fetch the node data to return"""
             d = self._client.get(path)
             d.addCallback(on_get_node_success, path)
-            d.addErrback(on_reservation_failed)
+            d.addErrback(on_get_node_failed, path)
+            return d
+
+        def on_get_node_failed(f, path):
+            """If we can't fetch the node, delete the processing node."""
+            d = self._client.delete(path+"-processing")
+            d.addCallback(on_reservation_failed)
             return d
 
         def on_get_node_success((data, stat), path):
-            d = self._client.create(path+"-processing",
-                                    flags=zookeeper.EPHEMERAL)
-            d.addCallback(on_reservation_success, path, data)
-            d.addErrback(on_reservation_failed)
-            return d
-
-        def on_reservation_success(processing_path, path, data):
+            """If we got the node, we're done."""
             request.processing_children = False
             request.callback(
                 QueueItem(
                     path, data, self._client, self._item_processed_callback))
 
         def on_reservation_failed(failure=None):
+            """If we can't get the node or reserve, continue processing
+            the children."""
             if failure and not failure.check(
                 zookeeper.NodeExistsException, zookeeper.NoNodeException):
+                request.processing_children = True
                 request.errback(failure)
                 return
 
             if children:
                 name = children.pop(0)
-                return fetch_node(name)
+                return check_node(name)
 
             # If a watch fired while processing children, process it
             # after the children list is exhausted.
@@ -312,7 +336,7 @@ class ReliableQueue(Queue):
             return on_reservation_failed()
 
         name = children.pop(0)
-        return fetch_node(name)
+        return check_node(name)
 
 
 class SerializedQueue(ReliableQueue):
