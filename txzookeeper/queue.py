@@ -231,13 +231,8 @@ class QueueItem(object):
         """
         d = self._client.delete(self.path)
 
-        def on_node_delete(r):
-            return self._client.delete(self.path+"-processing")
-
-        d.addCallback(on_node_delete)
-
         if self._processed_callback:
-            d.addCallback(self._processed_callback)
+            d.addCallback(self._processed_callback, self.path)
         return d
 
 
@@ -257,7 +252,8 @@ class ReliableQueue(Queue):
     has been processed or not.
     """
 
-    _item_processed_callback = None
+    def _item_processed_callback(self, result_code, item_path):
+        return self._client.delete(item_path+"-processing")
 
     def _filter_children(self, children, suffix="-processing"):
         """
@@ -344,7 +340,7 @@ class ReliableQueue(Queue):
         return check_node(name)
 
 
-class SerializedQueue(ReliableQueue):
+class SerializedQueue(Queue):
     """
     A serialized queue ensures even with multiple consumers items are retrieved
     and processed in the order they where placed in the queue.
@@ -358,7 +354,7 @@ class SerializedQueue(ReliableQueue):
         super(SerializedQueue, self).__init__(path, client, acl, persistent)
         self._lock = Lock("%s/%s"%(self.path, "_lock"), client)
 
-    def _item_processed_callback(self, r):
+    def _item_processed_callback(self, result_code, item_path):
         return self._lock.release()
 
     def _filter_children(self, children, suffix="-processing"):
@@ -410,3 +406,46 @@ class SerializedQueue(ReliableQueue):
         d.addErrback(self._on_lock_directory_does_not_exist)
         d.addCallback(self._on_lock_acquired)
         return d
+
+    def _get_item(self, children, request):
+
+        def fetch_node(name):
+            path = "/".join((self._path, name))
+            d = self._client.get(path)
+            d.addCallback(on_node_retrieved, path)
+            d.addErrback(on_reservation_failed)
+            return d
+
+        def on_node_retrieved((data, stat), path):
+            request.processing_children = False
+            request.callback(
+                QueueItem(
+                    path, data, self._client, self._item_processed_callback))
+
+        def on_reservation_failed(failure=None):
+            """If we can't get the node or reserve, continue processing
+            the children."""
+            if failure and not failure.check(
+                zookeeper.NodeExistsException, zookeeper.NoNodeException):
+                request.processing_children = True
+                request.errback(failure)
+                return
+
+            if children:
+                name = children.pop(0)
+                return fetch_node(name)
+
+            # If a watch fired while processing children, process it
+            # after the children list is exhausted.
+            request.processing_children = False
+            if request.refetch_children:
+                request.refetch_children = False
+                return self._get(request)
+
+        self._filter_children(children)
+
+        if not children:
+            return on_reservation_failed()
+
+        name = children.pop(0)
+        return fetch_node(name)
