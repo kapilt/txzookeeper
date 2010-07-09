@@ -297,10 +297,15 @@ class ReliableQueue(Queue):
             d.addErrback(on_get_node_failed, path)
             return d
 
-        def on_get_node_failed(f, path):
+        def on_get_node_failed(failure, path):
             """If we can't fetch the node, delete the processing node."""
             d = self._client.delete(path+"-processing")
-            d.addCallback(on_reservation_failed)
+
+            # propogate unexpected errors appropriately
+            if not failure.check(zookeeper.NoNodeException):
+                d.addCallback(lambda x: request.errback(failure))
+            else:
+                d.addCallback(on_reservation_failed)
             return d
 
         def on_get_node_success((data, stat), path):
