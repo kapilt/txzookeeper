@@ -281,13 +281,14 @@ class ZookeeperClient(object):
 
     def exists(self, path, watcher=None):
         """
-        Check that the given node path exists. Returns a deferred, the deferred
-        value If it does exist is the node stat information (created, modified,
-        version, etc.). If it doesn't exist the deferred value is None.
+        Check that the given node path exists. Returns a deferred that
+        holds the node stat information if the node exists (created,
+        modified, version, etc.), or ``None`` if it does not exist.
 
-        An optional watcher callable may be passed that will be called back
-        when the node is modified or removed.
+        Optionally a watcher (callable) may be set on this path to be
+        notified of changes.
         """
+
         self._check_connected()
         d = defer.Deferred()
 
@@ -304,13 +305,27 @@ class ZookeeperClient(object):
         self._check_result(result)
         return d
 
+    def exists_and_watch(self, path):
+        """
+        Check that the given node path exists and set watch.
+
+        In addition to the deferred method result, this method returns
+        a deferred that is called back when the node is modified or
+        removed (once).
+        """
+
+        d = defer.Deferred()
+        def callback(*args):
+            return d.callback(args)
+        return self.exists(path, callback), d
+
     def get(self, path, watcher=None):
         """
-        Get the node's data for the given node path. Returns a deferred. The
-        deferred value is the content of the Node.
+        Get the node's data for the given node path. Returns a
+        deferred that holds the content of the node.
 
-        An optional watcher callable may be passed that will be called back
-        when the node is modified or removed.
+        Optionally a watcher (callable) may be set on this path to be
+        notified of changes.
         """
 
         self._check_connected()
@@ -328,12 +343,26 @@ class ZookeeperClient(object):
         self._check_result(result)
         return d
 
+    def get_and_watch(self, path):
+        """
+        Get the node's data for the given node path and set watch.
+
+        In addition to the deferred method result, this method returns
+        a deferred that is called back when the node is modified or
+        removed (once).
+        """
+
+        d = defer.Deferred()
+        def callback(*args):
+            return d.callback(args)
+        return self.get(path, callback), d
+
     def get_children(self, path, watcher=None):
         """
         Get the ids of all children directly under the given path.
 
-        Optionally a watcher (callable) may be set on this path to be notified
-        of changes.
+        An optional watcher (callable) may be passed that will be
+        called back when a change happens on the provided path (once).
         """
         self._check_connected()
         d = defer.Deferred()
@@ -349,6 +378,20 @@ class ZookeeperClient(object):
         result = zookeeper.aget_children(self.handle, path, watcher, callback)
         self._check_result(result)
         return d
+
+    def get_children_and_watch(self, path):
+        """
+        Get the ids of all children directly under the given path.
+
+        In addition to the deferred method result, this method returns
+        a deferred that is called back when a change happens on the
+        provided path (once).
+        """
+
+        d = defer.Deferred()
+        def callback(*args):
+            return d.callback(args)
+        return self.get_children(path, callback), d
 
     def get_acl(self, path):
         """
@@ -434,15 +477,15 @@ class ZookeeperClient(object):
         self._check_result(result)
         return d
 
-    def set_connection_watcher(self, watcher):
+    def set_connection_watch(self):
         """
         Sets a permanent global watcher on the connection. This will get
         notice of changes to the connection state.
-
-        @param: watcher function
         """
-        watcher = self._wrap_watcher(watcher)
+        d = defer.Deferred()
+        watcher = self._wrap_watcher(d.callback)
         zookeeper.set_watcher(self.handle, watcher)
+        return d
 
     def sync(self, path="/"):
         """

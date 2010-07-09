@@ -189,14 +189,16 @@ class ClientTests(ZookeeperTestCase):
         d = self.client.connect()
         watch_deferred = Deferred()
 
-        def node_watch(type, state, path):
+        def node_watch((type, state, path)):
             watch_deferred.callback((type, path))
 
         def create_node(client):
             return self.client.create("/foobar-watched", "rabbit")
 
         def get_node(path):
-            return self.client.get(path, node_watch)
+            data, watch = self.client.get_and_watch(path)
+            watch.addCallback(node_watch)
+            return data
 
         def new_connection(data):
             self.client2 = ZookeeperClient("127.0.0.1:2181")
@@ -351,15 +353,17 @@ class ClientTests(ZookeeperTestCase):
         node_path = "/animals"
         watcher_deferred = Deferred()
 
-        def node_watcher(event_type, state, path):
+        def node_watcher((event_type, state, path)):
             watcher_deferred.callback((event_type, path))
 
         def create_container(path):
             return self.client.create(node_path, "")
 
         def check_exists(path):
-            return self.client.exists(
-                "%s/wooly-mammoth"%node_path, node_watcher)
+            exists, watch = self.client.exists_and_watch(
+                "%s/wooly-mammoth"%node_path)
+            watch.addCallback(node_watcher)
+            return exists
 
         def new_connection(node_stat):
             self.assertFalse(node_stat)
@@ -552,14 +556,16 @@ class ClientTests(ZookeeperTestCase):
         d = self.client.connect()
         watch_deferred = Deferred()
 
-        def watch_children(type, state, path):
+        def watch_children((type, state, path)):
             watch_deferred.callback((type, path))
 
         def create_node(client):
             return client.create("/jupiter")
 
         def get_children(path):
-            return self.client.get_children(path, watch_children)
+            ids, watch = self.client.get_children_and_watch(path)
+            watch.addCallback(watch_children)
+            return ids
 
         def new_connection(children):
             self.assertFalse(children)
@@ -914,23 +920,6 @@ class ClientTests(ZookeeperTestCase):
         d.addCallback(verify_recoverable)
         return d
 
-    def test_invalid_watcher(self):
-        """
-        Setting an invalid watcher raises a syntaxerror.
-        """
-        d = self.client.connect()
-
-        def set_invalid_watcher(client):
-            return client.set_connection_watcher(1)
-
-        def verify_invalid(failure):
-            self.assertEqual(failure.value.args, ("invalid watcher",))
-            self.assertTrue(isinstance(failure.value, SyntaxError))
-
-        d.addCallback(set_invalid_watcher)
-        d.addErrback(verify_invalid)
-        return d
-
     def test_connect_with_server(self):
         """
         A client's servers can be specified in the connect method.
@@ -1058,7 +1047,8 @@ class ClientTests(ZookeeperTestCase):
             observed.append(args)
 
         def set_global_watcher(client):
-            client.set_connection_watcher(watch)
+            d = client.set_connection_watch()
+            d.addCallback(watch)
             return client
 
         def close_connection(client):
