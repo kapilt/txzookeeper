@@ -1,4 +1,5 @@
 
+from zookeeper import NoNodeException
 from mocker import ANY
 from twisted.internet.defer import (
     inlineCallbacks, returnValue, Deferred, succeed)
@@ -79,6 +80,22 @@ class LockTests(ZookeeperTestCase):
         yield lock.acquire()
         self.assertEqual(lock.acquired, True)
         yield self.failUnlessFailure(lock.acquire(), LockError)
+
+    @inlineCallbacks
+    def test_acquire_after_error(self):
+        """
+        Any instance state associated with a failed acquired should be cleared
+        on error, allowing subsequent to succeed.
+        """
+        client = yield self.open_client()
+        path = "/lock-test-acquire-after-error"
+        lock = Lock(path, client)
+        d = lock.acquire()
+        self.failUnlessFailure(d, NoNodeException)
+        yield d
+        yield client.create(path)
+        yield lock.acquire()
+        self.assertEqual(lock.acquired, True)
 
     @inlineCallbacks
     def test_error_on_acquire_acquiring(self):

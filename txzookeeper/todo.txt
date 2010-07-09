@@ -2,10 +2,10 @@
 bugs to file upstream
 
  - you can set acl on a non existant node.
- - memory leak every api invocation.
+ - memory leak every api invocation. [really? need some measurements here]
 
  observed while trying xtest_get_children_with_watcher
 
- - async get children with watcher seems broken.
+ - async get children with watcher seems broken. [772 - fixed upstream]
  - segfault if close during completion.
  - getting a watch notification when closing a connection, segfaults.
