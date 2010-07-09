@@ -132,7 +132,9 @@ class ZNode(object):
         return node_data
 
     def get_data(self):
-        """Retrieve the node's data."""
+        """
+        Retrieve the node's data.
+        """
         d = self._context.get(self.path)
         d.addCallback(self._on_get_node_success)
         d.addErrback(self._on_get_node_error)
