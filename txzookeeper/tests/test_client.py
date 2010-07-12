@@ -344,6 +344,33 @@ class ClientTests(ZookeeperTestCase):
         d.addCallback(verify_exists)
         return d
 
+    def test_exists_with_watcher_and_close(self):
+        """
+        Closing a connection with an watch outstanding behaves correctly.
+        """
+        d = self.client.connect()
+        zookeeper.set_debug_level(zookeeper.LOG_LEVEL_DEBUG)
+
+        def node_watcher(event_type, state, path):
+            client = getattr(self, "client", None)
+            if client is not None and client.connected:
+                self.fail("Client should be disconnected")
+
+        def create_node(client):
+            return client.create("/syracuse")
+
+        def check_exists(path):
+            # shouldn't fire till unit test cleanup
+            return self.client.exists(path, node_watcher)
+
+        def verify_exists(result):
+            self.assertTrue(result)
+
+        d.addCallback(create_node)
+        d.addCallback(check_exists)
+        d.addCallback(verify_exists)
+        return d
+
     def test_exists_with_nonexistant_watcher(self):
         """
         The exists method can also be used to set an optional watcher on a
