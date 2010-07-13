@@ -120,7 +120,7 @@ class LockTests(ZookeeperTestCase):
         self.mocker.result((succeed(True), watch))
         self.mocker.replay()
 
-        # now we attempt to acquire the lock, rigged above to succeed
+        # now we attempt to acquire the lock, rigged above to not succeed
         d = lock.acquire()
         test_deferred = Deferred()
 
