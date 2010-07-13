@@ -113,11 +113,12 @@ class ZNode(object):
         """
         node_changed = Deferred()
 
-        def on_node_event(event, state, path):
+        def on_node_event((event, state, path)):
             return node_changed.callback(
                 NodeEvent(event, state, self))
 
-        d = self._context.exists(self.path, on_node_event)
+        d, w = self._context.exists_and_watch(self.path)
+        w.addCallback(on_node_event)
         d.addCallback(self._on_exists_success)
         return d, node_changed
 
@@ -147,11 +148,12 @@ class ZNode(object):
         """
         node_changed = Deferred()
 
-        def on_node_change(event, status, path):
+        def on_node_change((event, status, path)):
             node_changed.callback(
                 NodeEvent(event, status, self))
 
-        d = self._context.get(self.path, watcher=on_node_change)
+        d, w = self._context.get_and_watch(self.path)
+        w.addCallback(on_node_change)
         d.addCallback(self._on_get_node_success)
         d.addErrback(self._on_get_node_error)
         return d, node_changed
@@ -217,13 +219,13 @@ class ZNode(object):
         """
         children_changed = Deferred()
 
-        def on_child_added_removed(event, status, path):
+        def on_child_added_removed((event, status, path)):
             # path is the container not the child.
             children_changed.callback(
                 NodeEvent(event, status, self))
 
-        d = self._context.get_children(
-            self.path, watcher=on_child_added_removed)
+        d, w = self._context.get_children_and_watch(self.path)
+        w.addCallback(on_child_added_removed)
         d.addCallback(self._on_get_children_filter_results, prefix)
         return d, children_changed
 

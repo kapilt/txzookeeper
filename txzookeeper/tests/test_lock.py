@@ -110,23 +110,31 @@ class LockTests(ZookeeperTestCase):
         # setup the client to create the intended environment
         mock_client = self.mocker.patch(client)
         mock_client.create(ANY, flags=ANY)
-        self.mocker.result(succeed("%s/%s"%(path, "lock-3")))
+        self.mocker.result(succeed("%s/%s" % (path, "lock-3")))
 
         mock_client.get_children("/lock-test")
         self.mocker.result(succeed(["lock-2", "lock-3"]))
 
-        mock_client.exists("%s/%s"%(path, "lock-2"), ANY)
-        self.mocker.result(succeed(True))
+        mock_client.exists_and_watch("%s/%s" % (path, "lock-2"))
+        watch = Deferred()
+        self.mocker.result((succeed(True), watch))
         self.mocker.replay()
 
-        # now we attempt to acquire the lock, rigged above to not succeed
-        lock.acquire()
+        # now we attempt to acquire the lock, rigged above to succeed
+        d = lock.acquire()
         test_deferred = Deferred()
 
         # and next we schedule a lock attempt, which should fail as we're
         # still attempting to acquire the lock.
         def attempt_acquire():
+            # make sure lock was previously attempted acquired without
+            # error (disregarding that it was rigged to *fail*)
+            from twisted.python.failure import Failure
+            self.assertFalse(isinstance(d.result, Failure))
+
+            # acquire lock and expect to fail
             self.failUnlessFailure(lock.acquire(), LockError)
+
             # after we've verified the error handling, end the test
             test_deferred.callback(None)
 
@@ -149,13 +157,14 @@ class LockTests(ZookeeperTestCase):
         # setup the client to create the intended environment
         mock_client = self.mocker.patch(client)
         mock_client.create(ANY, flags=ANY)
-        self.mocker.result(succeed("%s/%s"%(path, "lock-3")))
+        self.mocker.result(succeed("%s/%s" % (path, "lock-3")))
 
         mock_client.get_children(path)
         self.mocker.result(succeed(["lock-2", "lock-3"]))
 
-        mock_client.exists("%s/%s"%(path, "lock-2"), ANY)
-        self.mocker.result(succeed(False))
+        mock_client.exists_and_watch("%s/%s" % (path, "lock-2"))
+        watch = Deferred()
+        self.mocker.result((succeed(False), watch))
 
         mock_client.get_children(path)
         self.mocker.result(succeed(["lock-3"]))

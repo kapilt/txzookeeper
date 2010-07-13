@@ -154,8 +154,9 @@ class QueueTests(ZookeeperTestCase):
 
         # setup the test scenario
         mock_client = self.mocker.patch(test_client)
-        mock_client.get_children(path, ANY)
-        self.mocker.result(succeed(["entry-000000"]))
+        mock_client.get_children_and_watch(path)
+        watch = Deferred()
+        self.mocker.result((succeed(["entry-000000"]), watch))
 
         item_path = "%s/%s"%(path, "entry-000000")
         mock_client.get(item_path)

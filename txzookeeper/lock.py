@@ -37,7 +37,7 @@ class Lock(object):
         """Acquire the lock."""
 
         if self._acquired:
-            error = LockError("Already holding the lock %s"%(self.path))
+            error = LockError("Already holding the lock %s" % (self.path))
             return fail(error)
 
         if self._candidate_path is not None:
@@ -49,7 +49,7 @@ class Lock(object):
         # Create our candidate node in the lock directory.
         d = self._client.create(
             "/".join((self.path, self.prefix)),
-            flags=zookeeper.EPHEMERAL|zookeeper.SEQUENCE)
+            flags=zookeeper.EPHEMERAL | zookeeper.SEQUENCE)
 
         d.addCallback(self._on_candidate_create)
         d.addErrback(self._on_no_queue_error)
@@ -76,7 +76,7 @@ class Lock(object):
         if its not then watch the nearest candidate till it is.
         """
         candidate_name = self._candidate_path[
-            self._candidate_path.rfind('/')+1:]
+            self._candidate_path.rfind('/') + 1:]
 
         # Check to see if our node is the first candidate in the list.
         children.sort()
@@ -90,17 +90,13 @@ class Lock(object):
 
         # If someone else holds the lock, then wait until holder immediately
         # before us releases the lock or dies.
-        previous_path = "/".join((self.path, children[index-1]))
-        exists_deferred, watch_deferred = self._exists_and_watch(previous_path)
-        exists_deferred.addCallback(self._check_previous_owner_existence,
-                                     watch_deferred)
+        previous_path = "/".join((self.path, children[index - 1]))
+        exists_deferred, watch_deferred = self._client.exists_and_watch(
+            previous_path)
+        exists_deferred.addCallback(
+            self._check_previous_owner_existence,
+            watch_deferred)
         return exists_deferred
-
-    def _exists_and_watch(self, path):
-        watch_d = Deferred()
-        exists_d = self._client.exists(path, lambda *args:
-                                       watch_d.callback(args))
-        return exists_d, watch_d
 
     def _check_previous_owner_existence(self, previous_owner_exists,
                                         watch_deferred):

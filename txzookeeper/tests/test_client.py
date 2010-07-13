@@ -226,26 +226,22 @@ class ClientTests(ZookeeperTestCase):
         another session.
         """
         d = self.client.connect()
-        watch_deferred = Deferred()
-
-        def node_watch(type, state, path):
-            watch_deferred.callback((type, path))
 
         def create_node(client):
             return self.client.create("/foobar-watched", "rabbit")
 
         def get_node(path):
-            return self.client.get(path, node_watch)
+            return self.client.get_and_watch(path)
 
-        def new_connection(data):
+        def new_connection((data, watch)):
             self.client2 = ZookeeperClient("127.0.0.1:2181")
-            return self.client2.connect()
+            return self.client2.connect(), watch
 
-        def trigger_watch(client):
+        def trigger_watch((client, watch)):
             zookeeper.delete(self.client2.handle, "/foobar-watched")
-            return watch_deferred
+            return watch
 
-        def verify_watch((event_type, path)):
+        def verify_watch((event_type, state, path)):
             self.assertEqual(path, "/foobar-watched")
             self.assertEqual(event_type, zookeeper.DELETED_EVENT)
 
@@ -351,7 +347,7 @@ class ClientTests(ZookeeperTestCase):
         d = self.client.connect()
         zookeeper.set_debug_level(zookeeper.LOG_LEVEL_DEBUG)
 
-        def node_watcher(event_type, state, path):
+        def node_watcher((event_type, state, path)):
             client = getattr(self, "client", None)
             if client is not None and client.connected:
                 self.fail("Client should be disconnected")
@@ -361,7 +357,9 @@ class ClientTests(ZookeeperTestCase):
 
         def check_exists(path):
             # shouldn't fire till unit test cleanup
-            return self.client.exists(path, node_watcher)
+            d, w = self.client.exists_and_watch(path)
+            w.addCallback(node_watcher)
+            return d
 
         def verify_exists(result):
             self.assertTrue(result)

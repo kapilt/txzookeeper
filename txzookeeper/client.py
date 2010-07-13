@@ -86,6 +86,55 @@ class ZookeeperClient(object):
             raise error
         return None
 
+    def _get(self, path, watcher):
+        self._check_connected()
+        d = defer.Deferred()
+
+        def _cb_get(result_code, value, stat):
+            error = self._check_result(result_code, True)
+            if error:
+                return d.errback(error)
+            d.callback((value, stat))
+
+        callback = self._zk_thread_callback(_cb_get)
+        watcher = self._wrap_watcher(watcher)
+        result = zookeeper.aget(self.handle, path, watcher, callback)
+        self._check_result(result)
+        return d
+
+    def _get_children(self, path, watcher):
+        self._check_connected()
+        d = defer.Deferred()
+
+        def _cb_get_children(result_code, children):
+            error = self._check_result(result_code, True)
+            if error:
+                return d.errback(error)
+            d.callback(children)
+
+        callback = self._zk_thread_callback(_cb_get_children)
+        watcher = self._wrap_watcher(watcher)
+        result = zookeeper.aget_children(self.handle, path, watcher, callback)
+        self._check_result(result)
+        return d
+
+    def _exists(self, path, watcher):
+        self._check_connected()
+        d = defer.Deferred()
+
+        def _cb_exists(result_code, stat):
+            error = self._check_result(
+                result_code, True, extra_codes=(zookeeper.NONODE,))
+            if error:
+                return d.errback(error)
+            d.callback(stat)
+
+        callback = self._zk_thread_callback(_cb_exists)
+        watcher = self._wrap_watcher(watcher)
+        result = zookeeper.aexists(self.handle, path, watcher, callback)
+        self._check_result(result)
+        return d
+
     def _wrap_watcher(self, watcher):
         if watcher is None:
             return watcher
@@ -100,7 +149,7 @@ class ZookeeperClient(object):
         thread after, zookeeper calls the wrapper.
         """
 
-        def wrapper(handle, *args): # pragma: no cover
+        def wrapper(handle, *args):  # pragma: no cover
             reactor.callFromThread(func, *args)
         return wrapper
 
@@ -279,31 +328,14 @@ class ZookeeperClient(object):
         self._check_result(result)
         return d
 
-    def exists(self, path, watcher=None):
+    def exists(self, path):
         """
         Check that the given node path exists. Returns a deferred that
         holds the node stat information if the node exists (created,
         modified, version, etc.), or ``None`` if it does not exist.
-
-        Optionally a watcher (callable) may be set on this path to be
-        notified of changes.
         """
 
-        self._check_connected()
-        d = defer.Deferred()
-
-        def _cb_exists(result_code, stat):
-            error = self._check_result(
-                result_code, True, extra_codes=(zookeeper.NONODE,))
-            if error:
-                return d.errback(error)
-            d.callback(stat)
-
-        callback = self._zk_thread_callback(_cb_exists)
-        watcher = self._wrap_watcher(watcher)
-        result = zookeeper.aexists(self.handle, path, watcher, callback)
-        self._check_result(result)
-        return d
+        return self._exists(path, None)
 
     def exists_and_watch(self, path):
         """
@@ -315,33 +347,18 @@ class ZookeeperClient(object):
         """
 
         d = defer.Deferred()
+
         def callback(*args):
             return d.callback(args)
-        return self.exists(path, callback), d
+        return self._exists(path, callback), d
 
-    def get(self, path, watcher=None):
+    def get(self, path):
         """
         Get the node's data for the given node path. Returns a
         deferred that holds the content of the node.
-
-        Optionally a watcher (callable) may be set on this path to be
-        notified of changes.
         """
 
-        self._check_connected()
-        d = defer.Deferred()
-
-        def _cb_get(result_code, value, stat):
-            error = self._check_result(result_code, True)
-            if error:
-                return d.errback(error)
-            d.callback((value, stat))
-
-        callback = self._zk_thread_callback(_cb_get)
-        watcher = self._wrap_watcher(watcher)
-        result = zookeeper.aget(self.handle, path, watcher, callback)
-        self._check_result(result)
-        return d
+        return self._get(path, None)
 
     def get_and_watch(self, path):
         """
@@ -353,31 +370,16 @@ class ZookeeperClient(object):
         """
 
         d = defer.Deferred()
+
         def callback(*args):
             return d.callback(args)
-        return self.get(path, callback), d
+        return self._get(path, callback), d
 
-    def get_children(self, path, watcher=None):
+    def get_children(self, path):
         """
         Get the ids of all children directly under the given path.
-
-        An optional watcher (callable) may be passed that will be
-        called back when a change happens on the provided path (once).
         """
-        self._check_connected()
-        d = defer.Deferred()
-
-        def _cb_get_children(result_code, children):
-            error = self._check_result(result_code, True)
-            if error:
-                return d.errback(error)
-            d.callback(children)
-
-        callback = self._zk_thread_callback(_cb_get_children)
-        watcher = self._wrap_watcher(watcher)
-        result = zookeeper.aget_children(self.handle, path, watcher, callback)
-        self._check_result(result)
-        return d
+        return self._get_children(path, None)
 
     def get_children_and_watch(self, path):
         """
@@ -389,9 +391,10 @@ class ZookeeperClient(object):
         """
 
         d = defer.Deferred()
+
         def callback(*args):
             return d.callback(args)
-        return self.get_children(path, callback), d
+        return self._get_children(path, callback), d
 
     def get_acl(self, path):
         """
