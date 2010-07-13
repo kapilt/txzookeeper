@@ -1,20 +1,22 @@
 from setuptools import find_packages, setup
 
 
-#from txzookeeper import version
+from txzookeeper import version
 
 
 long_description = """
+Twisted API for Apache Zookeeper. Includes a distributed lock, and several
+queue implementations.
 """
 
 setup(
     name="txzookeeper",
- #   version=version.txaws,
-    description="Async library for Zookeeper",
+    version=version,
+    description="Twisted api for Apache Zookeeper",
     author="txZooKeeper Developers",
     author_email="txzookeeper@lists.launchpad.net",
     url="https://launchpad.net/txzookeeper",
-    license="MIT",
+    license="LGPL",
     packages=find_packages(),
     test_suite="txzookeeper.tests.egg_test_runner",
     long_description=long_description,
