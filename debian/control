@@ -2,7 +2,7 @@ Source: txzookeeper
 Section: python
 Priority: optional
 XS-Python-Version: >= 2.5
-Maintainer: Ensemble Developers <canonical-ensemble@lists.canonical.com>
+Maintainer: Ensemble Developers <ensemble@lists.ubuntu.com>
 Build-Depends: debhelper (>= 7), python-support (>= 0.6), python-central (>= 0.5), python, cdbs, python-setuptools, python-zookeeper
 Homepage: https://launchpad.net/txzookeeper
 Standards-Version: 3.8.4
