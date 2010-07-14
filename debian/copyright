@@ -1,12 +1,12 @@
 Format-Specification: http://svn.debian.org/wsvn/dep/web/deps/dep5.mdwn?op=file&rev=135
 Name: txaws
-Maintainer: Kapil Thangavelu 
+Maintainer: Kapil Thangavelu
 Source: https://launchpad.net/txzookeeper
 
-This package was debianized by  <kapil.thangavelu@ubuntu.com> on
-Fri, 12 Feb 2010 13:57:58 -0500.
+This package was debianized by  <kapil.thangavelu@canonical.com> on
+Fri, 12 July 2010 13:57:58 -0500.
 
-Upstream Author: Kapil Thangavelu <kapil.thangavelu@canonical.com>
+Upstream Author: Ensemble Developers <canonical-ensemble@lists.canonical.com>
 
 Copyright: 2010, Canonical Ltd. 
 License: MIT / X / Expat License
