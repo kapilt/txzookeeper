@@ -480,15 +480,15 @@ class ZookeeperClient(object):
         self._check_result(result)
         return d
 
-    def set_connection_watch(self):
+    def set_connection_watcher(self, watcher):
         """
         Sets a permanent global watcher on the connection. This will get
         notice of changes to the connection state.
+
+        @param: watcher function
         """
-        d = defer.Deferred()
-        watcher = self._wrap_watcher(d.callback)
+        watcher = self._wrap_watcher(watcher)
         zookeeper.set_watcher(self.handle, watcher)
-        return d
 
     def sync(self, path="/"):
         """

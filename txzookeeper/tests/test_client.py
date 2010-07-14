@@ -945,6 +945,23 @@ class ClientTests(ZookeeperTestCase):
         d.addCallback(verify_recoverable)
         return d
 
+    def test_invalid_watcher(self):
+        """
+        Setting an invalid watcher raises a syntaxerror.
+        """
+        d = self.client.connect()
+
+        def set_invalid_watcher(client):
+            return client.set_connection_watcher(1)
+
+        def verify_invalid(failure):
+            self.assertEqual(failure.value.args, ("invalid watcher",))
+            self.assertTrue(isinstance(failure.value, SyntaxError))
+
+        d.addCallback(set_invalid_watcher)
+        d.addErrback(verify_invalid)
+        return d
+
     def test_connect_with_server(self):
         """
         A client's servers can be specified in the connect method.
@@ -1072,8 +1089,7 @@ class ClientTests(ZookeeperTestCase):
             observed.append(args)
 
         def set_global_watcher(client):
-            d = client.set_connection_watch()
-            d.addCallback(watch)
+            client.set_connection_watcher(watch)
             return client
 
         def close_connection(client):
