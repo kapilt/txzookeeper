@@ -5,13 +5,13 @@ import base64
 from twisted.internet.defer import inlineCallbacks
 from twisted.python.failure import Failure
 from txzookeeper.node import ZNode
+from txzookeeper.node import NodeEvent
 from txzookeeper.tests import TestCase
 from txzookeeper.tests.utils import deleteTree
 from txzookeeper import ZookeeperClient
 
 
 class NodeTest(TestCase):
-
     def setUp(self):
         super(NodeTest, self).setUp()
         zookeeper.set_debug_level(zookeeper.LOG_LEVEL_ERROR)
@@ -45,6 +45,14 @@ class NodeTest(TestCase):
         node = ZNode("/zoo/rabbit", self.client)
         self.assertEqual(node.name, "rabbit")
         self.assertEqual(node.path, "/zoo/rabbit")
+
+    def test_node_event_repr(self):
+        """
+        Node events have a human-readable representation.
+        """
+        node = ZNode("/zoo", self.client)
+        event = NodeEvent(4, None, node)
+        self.assertEqual(repr(event), "<NodeEvent child at '/zoo'>")
 
     @inlineCallbacks
     def test_node_exists_nonexistant(self):
@@ -284,8 +292,6 @@ class NodeTest(TestCase):
         event = yield watch
         self.assertEqual(event.path, "/zoo")
         self.assertEqual(event.type, zookeeper.CHILD_EVENT)
-        self.assertEqual(repr(event),
-                         "<NodeEvent child at '/zoo'>")
 
     @inlineCallbacks
     def test_bad_version_error(self):

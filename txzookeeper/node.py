@@ -41,7 +41,6 @@ class NodeEvent(object):
     def __repr__(self):
         return  "<NodeEvent %s at %r>"%(self.type_name, self.path)
 
-
 class ZNode(object):
     """
     A minimal object abstraction over a zookeeper node, utilizes no caching
