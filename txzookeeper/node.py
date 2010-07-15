@@ -3,6 +3,7 @@ from zookeeper import NoNodeException, BadVersionException
 from twisted.internet.defer import Deferred
 from txzookeeper.client import ZOO_OPEN_ACL_UNSAFE
 
+
 class NodeEvent(namedtuple("NodeEvent", 'type, connection_state, node')):
     """
     A node event is returned when a watch deferred fires. It denotes
@@ -35,7 +36,8 @@ class NodeEvent(namedtuple("NodeEvent", 'type, connection_state, node')):
         return self.type_name_map[self.type]
 
     def __repr__(self):
-        return  "<NodeEvent %s at %r>"%(self.type_name, self.path)
+        return  "<NodeEvent %s at %r>" % (self.type_name, self.path)
+
 
 class ZNode(object):
     """
