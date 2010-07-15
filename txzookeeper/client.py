@@ -81,9 +81,7 @@ class ClientEvent(namedtuple("ClientEvent", 'type, connection_state, path')):
 
 
 class ZookeeperClient(object):
-    """
-    An asynchronous twisted client for zookeeper.
-    """
+    """Asynchronous twisted client for zookeeper."""
 
     def __init__(self, servers=None, session_timeout=None):
         self._servers = servers
