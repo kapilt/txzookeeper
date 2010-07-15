@@ -1,5 +1,6 @@
 import zookeeper
 
+from collections import namedtuple
 from twisted.internet import defer, reactor
 
 # Default session timeout
@@ -58,6 +59,24 @@ class ConnectionTimeoutException(zookeeper.ZooKeeperException):
     the user specified timeout period.
     """
 
+class ClientEvent(namedtuple("ClientEvent", 'type, connection_state, path')):
+    """
+    A client event is returned when a watch deferred fires. It denotes
+    some event on the zookeeper client that the watch was requested on.
+    """
+
+    type_name_map = {
+        1: 'created',
+        2: 'deleted',
+        3: 'changed',
+        4: 'child'}
+
+    @property
+    def type_name(self):
+        return self.type_name_map[self.type]
+
+    def __repr__(self):
+        return  "<NodeEvent %s at %r>"%(self.type_name, self.path)
 
 class ZookeeperClient(object):
     """
@@ -349,7 +368,7 @@ class ZookeeperClient(object):
         d = defer.Deferred()
 
         def callback(*args):
-            d.callback(args)
+            d.callback(ClientEvent(*args))
         return self._exists(path, callback), d
 
     def get(self, path):
@@ -372,7 +391,7 @@ class ZookeeperClient(object):
         d = defer.Deferred()
 
         def callback(*args):
-            d.callback(args)
+            d.callback(ClientEvent(*args))
         return self._get(path, callback), d
 
     def get_children(self, path):
@@ -393,7 +412,7 @@ class ZookeeperClient(object):
         d = defer.Deferred()
 
         def callback(*args):
-            d.callback(args)
+            d.callback(ClientEvent(*args))
         return self._get_children(path, callback), d
 
     def get_acl(self, path):
