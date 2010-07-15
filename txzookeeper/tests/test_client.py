@@ -10,7 +10,7 @@ from twisted.internet.defer import Deferred
 from txzookeeper.tests import ZookeeperTestCase, utils
 from txzookeeper.client import (
     ZookeeperClient, ZOO_OPEN_ACL_UNSAFE, ConnectionTimeoutException,
-    ConnectionException)
+    ConnectionException, ClientEvent)
 
 PUBLIC_ACL = ZOO_OPEN_ACL_UNSAFE
 
@@ -42,6 +42,17 @@ class ClientTests(ZookeeperTestCase):
             self.assertEquals(client.state, zookeeper.CONNECTED_STATE)
         d.addCallback(check_connected)
         return d
+
+    def test_client_event_repr(self):
+        event = ClientEvent(4, 'state', 'path')
+        self.assertEqual(repr(event), "<NodeEvent child at 'path'>")
+
+    def test_client_event_attributes(self):
+        event = ClientEvent(4, 'state', 'path')
+        self.assertEqual(event.type, 4)
+        self.assertEqual(event.connection_state, 'state')
+        self.assertEqual(event.path, 'path')
+        self.assertEqual(event, (4, 'state', 'path'))
 
     def test_create_ephemeral_node_and_close_connection(self):
         """
