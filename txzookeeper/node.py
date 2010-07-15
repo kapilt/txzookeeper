@@ -1,12 +1,12 @@
+from collections import namedtuple
 from zookeeper import NoNodeException, BadVersionException
 from twisted.internet.defer import Deferred
 from txzookeeper.client import ZOO_OPEN_ACL_UNSAFE
 
-
-class NodeEvent(object):
+class NodeEvent(namedtuple("NodeEvent", 'type, connection_state, node')):
     """
-    A node event is returned when a watch deferred fires. It denotes some event
-    on the zookeeper node that the watch was requested on.
+    A node event is returned when a watch deferred fires. It denotes
+    some event on the zookeeper node that the watch was requested on.
 
     @ivar path: Path to the node the event was about.
 
@@ -20,19 +20,15 @@ class NodeEvent(object):
     zookeeper connection.
     """
 
-    __slots__ = ('type', 'connection_state', 'path', 'node')
-
     type_name_map = {
         1: 'created',
         2: 'deleted',
         3: 'changed',
         4: 'child'}
 
-    def __init__(self, event_type, connection_state, node):
-        self.type = event_type
-        self.connection_state = connection_state
-        self.node = node
-        self.path = node.path
+    @property
+    def path(self):
+        return self.node.path
 
     @property
     def type_name(self):
