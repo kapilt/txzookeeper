@@ -349,7 +349,7 @@ class ZookeeperClient(object):
         d = defer.Deferred()
 
         def callback(*args):
-            return d.callback(args)
+            d.callback(args)
         return self._exists(path, callback), d
 
     def get(self, path):
@@ -372,7 +372,7 @@ class ZookeeperClient(object):
         d = defer.Deferred()
 
         def callback(*args):
-            return d.callback(args)
+            d.callback(args)
         return self._get(path, callback), d
 
     def get_children(self, path):
@@ -393,7 +393,7 @@ class ZookeeperClient(object):
         d = defer.Deferred()
 
         def callback(*args):
-            return d.callback(args)
+            d.callback(args)
         return self._get_children(path, callback), d
 
     def get_acl(self, path):
