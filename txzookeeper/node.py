@@ -1,12 +1,13 @@
+from collections import namedtuple
 from zookeeper import NoNodeException, BadVersionException
 from twisted.internet.defer import Deferred
 from txzookeeper.client import ZOO_OPEN_ACL_UNSAFE
 
 
-class NodeEvent(object):
+class NodeEvent(namedtuple("NodeEvent", 'type, connection_state, node')):
     """
-    A node event is returned when a watch deferred fires. It denotes some event
-    on the zookeeper node that the watch was requested on.
+    A node event is returned when a watch deferred fires. It denotes
+    some event on the zookeeper node that the watch was requested on.
 
     @ivar path: Path to the node the event was about.
 
@@ -20,26 +21,22 @@ class NodeEvent(object):
     zookeeper connection.
     """
 
-    __slots__ = ('type', 'connection_state', 'path', 'node')
-
     type_name_map = {
         1: 'created',
         2: 'deleted',
         3: 'changed',
         4: 'child'}
 
-    def __init__(self, event_type, connection_state, node):
-        self.type = event_type
-        self.connection_state = connection_state
-        self.node = node
-        self.path = node.path
+    @property
+    def path(self):
+        return self.node.path
 
     @property
     def type_name(self):
         return self.type_name_map[self.type]
 
     def __repr__(self):
-        return  "<NodeEvent %s at %r>"%(self.type_name, self.path)
+        return  "<NodeEvent %s at %r>" % (self.type_name, self.path)
 
 
 class ZNode(object):
@@ -113,11 +110,12 @@ class ZNode(object):
         """
         node_changed = Deferred()
 
-        def on_node_event(event, state, path):
+        def on_node_event((event, state, path)):
             return node_changed.callback(
                 NodeEvent(event, state, self))
 
-        d = self._context.exists(self.path, on_node_event)
+        d, w = self._context.exists_and_watch(self.path)
+        w.addCallback(on_node_event)
         d.addCallback(self._on_exists_success)
         return d, node_changed
 
@@ -132,7 +130,9 @@ class ZNode(object):
         return node_data
 
     def get_data(self):
-        """Retrieve the node's data."""
+        """
+        Retrieve the node's data.
+        """
         d = self._context.get(self.path)
         d.addCallback(self._on_get_node_success)
         d.addErrback(self._on_get_node_error)
@@ -145,11 +145,12 @@ class ZNode(object):
         """
         node_changed = Deferred()
 
-        def on_node_change(event, status, path):
+        def on_node_change((event, status, path)):
             node_changed.callback(
                 NodeEvent(event, status, self))
 
-        d = self._context.get(self.path, watcher=on_node_change)
+        d, w = self._context.get_and_watch(self.path)
+        w.addCallback(on_node_change)
         d.addCallback(self._on_get_node_success)
         d.addErrback(self._on_get_node_error)
         return d, node_changed
@@ -215,13 +216,13 @@ class ZNode(object):
         """
         children_changed = Deferred()
 
-        def on_child_added_removed(event, status, path):
+        def on_child_added_removed((event, status, path)):
             # path is the container not the child.
             children_changed.callback(
                 NodeEvent(event, status, self))
 
-        d = self._context.get_children(
-            self.path, watcher=on_child_added_removed)
+        d, w = self._context.get_children_and_watch(self.path)
+        w.addCallback(on_child_added_removed)
         d.addCallback(self._on_get_children_filter_results, prefix)
         return d, children_changed
 

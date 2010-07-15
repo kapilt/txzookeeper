@@ -1,4 +1,3 @@
-
 import hashlib
 import base64
 
@@ -11,7 +10,7 @@ from twisted.internet.defer import Deferred
 from txzookeeper.tests import ZookeeperTestCase, utils
 from txzookeeper.client import (
     ZookeeperClient, ZOO_OPEN_ACL_UNSAFE, ConnectionTimeoutException,
-    ConnectionException)
+    ConnectionException, ClientEvent)
 
 PUBLIC_ACL = ZOO_OPEN_ACL_UNSAFE
 
@@ -43,6 +42,17 @@ class ClientTests(ZookeeperTestCase):
             self.assertEquals(client.state, zookeeper.CONNECTED_STATE)
         d.addCallback(check_connected)
         return d
+
+    def test_client_event_repr(self):
+        event = ClientEvent(4, 'state', 'path')
+        self.assertEqual(repr(event), "<ClientEvent child at 'path'>")
+
+    def test_client_event_attributes(self):
+        event = ClientEvent(4, 'state', 'path')
+        self.assertEqual(event.type, 4)
+        self.assertEqual(event.connection_state, 'state')
+        self.assertEqual(event.path, 'path')
+        self.assertEqual(event, (4, 'state', 'path'))
 
     def test_create_ephemeral_node_and_close_connection(self):
         """
@@ -189,14 +199,13 @@ class ClientTests(ZookeeperTestCase):
         d = self.client.connect()
         watch_deferred = Deferred()
 
-        def node_watch(type, state, path):
-            watch_deferred.callback((type, path))
-
         def create_node(client):
             return self.client.create("/foobar-watched", "rabbit")
 
         def get_node(path):
-            return self.client.get(path, node_watch)
+            data, watch = self.client.get_and_watch(path)
+            watch.chainDeferred(watch_deferred)
+            return data
 
         def new_connection(data):
             self.client2 = ZookeeperClient("127.0.0.1:2181")
@@ -206,9 +215,9 @@ class ClientTests(ZookeeperTestCase):
             zookeeper.set(self.client2.handle, "/foobar-watched", "abc")
             return watch_deferred
 
-        def verify_watch((event_type, path)):
-            self.assertEqual(path, "/foobar-watched")
-            self.assertEqual(event_type, zookeeper.CHANGED_EVENT)
+        def verify_watch(event):
+            self.assertEqual(event.path, "/foobar-watched")
+            self.assertEqual(event.type, zookeeper.CHANGED_EVENT)
 
         d.addCallback(create_node)
         d.addCallback(get_node)
@@ -224,28 +233,24 @@ class ClientTests(ZookeeperTestCase):
         another session.
         """
         d = self.client.connect()
-        watch_deferred = Deferred()
-
-        def node_watch(type, state, path):
-            watch_deferred.callback((type, path))
 
         def create_node(client):
             return self.client.create("/foobar-watched", "rabbit")
 
         def get_node(path):
-            return self.client.get(path, node_watch)
+            return self.client.get_and_watch(path)
 
-        def new_connection(data):
+        def new_connection((data, watch)):
             self.client2 = ZookeeperClient("127.0.0.1:2181")
-            return self.client2.connect()
+            return self.client2.connect(), watch
 
-        def trigger_watch(client):
+        def trigger_watch((client, watch)):
             zookeeper.delete(self.client2.handle, "/foobar-watched")
-            return watch_deferred
+            return watch
 
-        def verify_watch((event_type, path)):
-            self.assertEqual(path, "/foobar-watched")
-            self.assertEqual(event_type, zookeeper.DELETED_EVENT)
+        def verify_watch(event):
+            self.assertEqual(event.path, "/foobar-watched")
+            self.assertEqual(event.type, zookeeper.DELETED_EVENT)
 
         d.addCallback(create_node)
         d.addCallback(get_node)
@@ -349,7 +354,7 @@ class ClientTests(ZookeeperTestCase):
         d = self.client.connect()
         zookeeper.set_debug_level(zookeeper.LOG_LEVEL_DEBUG)
 
-        def node_watcher(event_type, state, path):
+        def node_watcher(event):
             client = getattr(self, "client", None)
             if client is not None and client.connected:
                 self.fail("Client should be disconnected")
@@ -359,7 +364,9 @@ class ClientTests(ZookeeperTestCase):
 
         def check_exists(path):
             # shouldn't fire till unit test cleanup
-            return self.client.exists(path, node_watcher)
+            d, w = self.client.exists_and_watch(path)
+            w.addCallback(node_watcher)
+            return d
 
         def verify_exists(result):
             self.assertTrue(result)
@@ -378,15 +385,14 @@ class ClientTests(ZookeeperTestCase):
         node_path = "/animals"
         watcher_deferred = Deferred()
 
-        def node_watcher(event_type, state, path):
-            watcher_deferred.callback((event_type, path))
-
         def create_container(path):
             return self.client.create(node_path, "")
 
         def check_exists(path):
-            return self.client.exists(
-                "%s/wooly-mammoth"%node_path, node_watcher)
+            exists, watch = self.client.exists_and_watch(
+                "%s/wooly-mammoth"%node_path)
+            watch.chainDeferred(watcher_deferred)
+            return exists
 
         def new_connection(node_stat):
             self.assertFalse(node_stat)
@@ -400,9 +406,9 @@ class ClientTests(ZookeeperTestCase):
         def shim(path):
             return watcher_deferred
 
-        def verify_watch((event_type, path)):
-            self.assertEqual(path, "%s/wooly-mammoth"%node_path)
-            self.assertEqual(event_type, zookeeper.CREATED_EVENT)
+        def verify_watch(event):
+            self.assertEqual(event.path, "%s/wooly-mammoth"%node_path)
+            self.assertEqual(event.type, zookeeper.CREATED_EVENT)
 
         d.addCallback(create_container)
         d.addCallback(check_exists)
@@ -579,14 +585,13 @@ class ClientTests(ZookeeperTestCase):
         d = self.client.connect()
         watch_deferred = Deferred()
 
-        def watch_children(type, state, path):
-            watch_deferred.callback((type, path))
-
         def create_node(client):
             return client.create("/jupiter")
 
         def get_children(path):
-            return self.client.get_children(path, watch_children)
+            ids, watch = self.client.get_children_and_watch(path)
+            watch.chainDeferred(watch_deferred)
+            return ids
 
         def new_connection(children):
             self.assertFalse(children)

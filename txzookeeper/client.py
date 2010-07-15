@@ -1,5 +1,6 @@
 import zookeeper
 
+from collections import namedtuple
 from twisted.internet import defer, reactor
 
 # Default session timeout
@@ -59,10 +60,28 @@ class ConnectionTimeoutException(zookeeper.ZooKeeperException):
     """
 
 
+class ClientEvent(namedtuple("ClientEvent", 'type, connection_state, path')):
+    """
+    A client event is returned when a watch deferred fires. It denotes
+    some event on the zookeeper client that the watch was requested on.
+    """
+
+    type_name_map = {
+        1: 'created',
+        2: 'deleted',
+        3: 'changed',
+        4: 'child'}
+
+    @property
+    def type_name(self):
+        return self.type_name_map[self.type]
+
+    def __repr__(self):
+        return  "<ClientEvent %s at %r>" % (self.type_name, self.path)
+
+
 class ZookeeperClient(object):
-    """
-    An asynchronous twisted client for zookeeper.
-    """
+    """Asynchronous twisted client for zookeeper."""
 
     def __init__(self, servers=None, session_timeout=None):
         self._servers = servers
@@ -86,6 +105,55 @@ class ZookeeperClient(object):
             raise error
         return None
 
+    def _get(self, path, watcher):
+        self._check_connected()
+        d = defer.Deferred()
+
+        def _cb_get(result_code, value, stat):
+            error = self._check_result(result_code, True)
+            if error:
+                return d.errback(error)
+            d.callback((value, stat))
+
+        callback = self._zk_thread_callback(_cb_get)
+        watcher = self._wrap_watcher(watcher)
+        result = zookeeper.aget(self.handle, path, watcher, callback)
+        self._check_result(result)
+        return d
+
+    def _get_children(self, path, watcher):
+        self._check_connected()
+        d = defer.Deferred()
+
+        def _cb_get_children(result_code, children):
+            error = self._check_result(result_code, True)
+            if error:
+                return d.errback(error)
+            d.callback(children)
+
+        callback = self._zk_thread_callback(_cb_get_children)
+        watcher = self._wrap_watcher(watcher)
+        result = zookeeper.aget_children(self.handle, path, watcher, callback)
+        self._check_result(result)
+        return d
+
+    def _exists(self, path, watcher):
+        self._check_connected()
+        d = defer.Deferred()
+
+        def _cb_exists(result_code, stat):
+            error = self._check_result(
+                result_code, True, extra_codes=(zookeeper.NONODE,))
+            if error:
+                return d.errback(error)
+            d.callback(stat)
+
+        callback = self._zk_thread_callback(_cb_exists)
+        watcher = self._wrap_watcher(watcher)
+        result = zookeeper.aexists(self.handle, path, watcher, callback)
+        self._check_result(result)
+        return d
+
     def _wrap_watcher(self, watcher):
         if watcher is None:
             return watcher
@@ -100,7 +168,7 @@ class ZookeeperClient(object):
         thread after, zookeeper calls the wrapper.
         """
 
-        def wrapper(handle, *args): # pragma: no cover
+        def wrapper(handle, *args):  # pragma: no cover
             reactor.callFromThread(func, *args)
         return wrapper
 
@@ -279,76 +347,73 @@ class ZookeeperClient(object):
         self._check_result(result)
         return d
 
-    def exists(self, path, watcher=None):
+    def exists(self, path):
         """
-        Check that the given node path exists. Returns a deferred, the deferred
-        value If it does exist is the node stat information (created, modified,
-        version, etc.). If it doesn't exist the deferred value is None.
+        Check that the given node path exists. Returns a deferred that
+        holds the node stat information if the node exists (created,
+        modified, version, etc.), or ``None`` if it does not exist.
+        """
 
-        An optional watcher callable may be passed that will be called back
-        when the node is modified or removed.
+        return self._exists(path, None)
+
+    def exists_and_watch(self, path):
         """
-        self._check_connected()
+        Check that the given node path exists and set watch.
+
+        In addition to the deferred method result, this method returns
+        a deferred that is called back when the node is modified or
+        removed (once).
+        """
+
         d = defer.Deferred()
 
-        def _cb_exists(result_code, stat):
-            error = self._check_result(
-                result_code, True, extra_codes=(zookeeper.NONODE,))
-            if error:
-                return d.errback(error)
-            d.callback(stat)
+        def callback(*args):
+            d.callback(ClientEvent(*args))
+        return self._exists(path, callback), d
 
-        callback = self._zk_thread_callback(_cb_exists)
-        watcher = self._wrap_watcher(watcher)
-        result = zookeeper.aexists(self.handle, path, watcher, callback)
-        self._check_result(result)
-        return d
-
-    def get(self, path, watcher=None):
+    def get(self, path):
         """
-        Get the node's data for the given node path. Returns a deferred. The
-        deferred value is the content of the Node.
-
-        An optional watcher callable may be passed that will be called back
-        when the node is modified or removed.
+        Get the node's data for the given node path. Returns a
+        deferred that holds the content of the node.
         """
 
-        self._check_connected()
+        return self._get(path, None)
+
+    def get_and_watch(self, path):
+        """
+        Get the node's data for the given node path and set watch.
+
+        In addition to the deferred method result, this method returns
+        a deferred that is called back when the node is modified or
+        removed (once).
+        """
+
         d = defer.Deferred()
 
-        def _cb_get(result_code, value, stat):
-            error = self._check_result(result_code, True)
-            if error:
-                return d.errback(error)
-            d.callback((value, stat))
+        def callback(*args):
+            d.callback(ClientEvent(*args))
+        return self._get(path, callback), d
 
-        callback = self._zk_thread_callback(_cb_get)
-        watcher = self._wrap_watcher(watcher)
-        result = zookeeper.aget(self.handle, path, watcher, callback)
-        self._check_result(result)
-        return d
+    def get_children(self, path):
+        """
+        Get the ids of all children directly under the given path.
+        """
+        return self._get_children(path, None)
 
-    def get_children(self, path, watcher=None):
+    def get_children_and_watch(self, path):
         """
         Get the ids of all children directly under the given path.
 
-        Optionally a watcher (callable) may be set on this path to be notified
-        of changes.
+        In addition to the deferred method result, this method returns
+        a deferred that is called back when a change happens on the
+        provided path (once).
         """
-        self._check_connected()
+
         d = defer.Deferred()
 
-        def _cb_get_children(result_code, children):
-            error = self._check_result(result_code, True)
-            if error:
-                return d.errback(error)
-            d.callback(children)
-
-        callback = self._zk_thread_callback(_cb_get_children)
-        watcher = self._wrap_watcher(watcher)
-        result = zookeeper.aget_children(self.handle, path, watcher, callback)
-        self._check_result(result)
-        return d
+        def callback(*args):
+            d.callback(ClientEvent(*args))
+        return self._get_children(path, callback), d
 
     def get_acl(self, path):
         """

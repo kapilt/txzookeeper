@@ -118,7 +118,8 @@ class Queue(object):
 
     def _get(self, request):
         request.processing_children = True
-        d = self._client.get_children(self._path, request.child_watcher)
+        d, w = self._client.get_children_and_watch(self._path)
+        w.addCallback(request.child_watcher)
         d.addCallback(self._get_item, request)
         return d
 
