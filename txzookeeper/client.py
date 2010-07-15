@@ -59,6 +59,7 @@ class ConnectionTimeoutException(zookeeper.ZooKeeperException):
     the user specified timeout period.
     """
 
+
 class ClientEvent(namedtuple("ClientEvent", 'type, connection_state, path')):
     """
     A client event is returned when a watch deferred fires. It denotes
@@ -76,7 +77,8 @@ class ClientEvent(namedtuple("ClientEvent", 'type, connection_state, path')):
         return self.type_name_map[self.type]
 
     def __repr__(self):
-        return  "<NodeEvent %s at %r>"%(self.type_name, self.path)
+        return  "<ClientEvent %s at %r>" % (self.type_name, self.path)
+
 
 class ZookeeperClient(object):
     """

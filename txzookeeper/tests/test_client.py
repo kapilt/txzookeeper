@@ -45,7 +45,7 @@ class ClientTests(ZookeeperTestCase):
 
     def test_client_event_repr(self):
         event = ClientEvent(4, 'state', 'path')
-        self.assertEqual(repr(event), "<NodeEvent child at 'path'>")
+        self.assertEqual(repr(event), "<ClientEvent child at 'path'>")
 
     def test_client_event_attributes(self):
         event = ClientEvent(4, 'state', 'path')
