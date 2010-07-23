@@ -1,9 +1,6 @@
 from setuptools import find_packages, setup
 
 
-from txzookeeper import version
-
-
 long_description = """
 Twisted API for Apache Zookeeper. Includes a distributed lock, and several
 queue implementations.
@@ -11,7 +8,7 @@ queue implementations.
 
 setup(
     name="txzookeeper",
-    version=version,
+    version="0.0.1",
     description="Twisted api for Apache Zookeeper",
     author="Ensemble Developers",
     author_email="ensemble@lists.ubuntu.com",
