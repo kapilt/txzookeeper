@@ -1,5 +1,6 @@
 import zookeeper
 
+from functools import partial
 from collections import namedtuple
 from twisted.internet import defer, reactor
 
@@ -271,22 +272,16 @@ class ZookeeperClient(object):
         if self.connected:
             raise zookeeper.ZooKeeperException("Already Connected")
 
-        def _cb_connected(type, state, path):
-            delayed.cancel()
-            if state == zookeeper.CONNECTED_STATE:
-                self.connected = True
-                d.callback(self)
-            else:
-                d.errback(
-                    ConnectionException("connection error", type, state, path))
-
-        callback = self._zk_thread_callback(_cb_connected)
-
-        # use a scheduled function to ensure a timeout
+        # Use a scheduled function to ensure a timeout.
         def _check_timeout():
             d.errback(
                 ConnectionTimeoutException("could not connect before timeout"))
-        delayed = reactor.callLater(timeout, _check_timeout)
+
+        scheduled_timeout = reactor.callLater(timeout, _check_timeout)
+
+        # Assemble an on connect callback with closure variable access.
+        callback = partial(self._cb_connected, scheduled_timeout, d)
+        callback = self._zk_thread_callback(callback)
 
         if self._session_timeout is None:
             self._session_timeout = DEFAULT_SESSION_TIMEOUT
@@ -298,6 +293,26 @@ class ZookeeperClient(object):
             self._servers, callback, self._session_timeout)
 
         return d
+
+    def _cb_connected(
+        self, scheduled_timeout, connect_deferred, type, state, path):
+        # Cancel the timeout delayed task if it hasn't fired.
+        if scheduled_timeout.active():
+            scheduled_timeout.cancel()
+
+        if connect_deferred.called and state == zookeeper.CONNECTED_STATE:
+            # If we timed out and then connected, we need to close the
+            # connection.
+            self.connected = True
+            self.close()
+            return
+        elif state == zookeeper.CONNECTED_STATE:
+            self.connected = True
+            connect_deferred.callback(self)
+            return
+
+        connect_deferred.errback(
+            ConnectionException("connection error", type, state, path))
 
     def create(self, path, data="", acls=[ZOO_OPEN_ACL_UNSAFE], flags=0):
         """
