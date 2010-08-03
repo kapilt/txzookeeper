@@ -3,7 +3,7 @@ import base64
 
 import zookeeper
 
-from mocker import ANY
+from mocker import ANY, MATCH
 
 from twisted.internet.defer import Deferred
 
@@ -13,6 +13,12 @@ from txzookeeper.client import (
     ConnectionException, ClientEvent)
 
 PUBLIC_ACL = ZOO_OPEN_ACL_UNSAFE
+
+
+def match_deferred(arg):
+    return isinstance(arg, Deferred)
+
+DEFERRED_MATCH = MATCH(match_deferred)
 
 
 class ClientTests(ZookeeperTestCase):
@@ -319,7 +325,7 @@ class ClientTests(ZookeeperTestCase):
         def check_exists(client):
             mock_client = self.mocker.patch(client)
             mock_client._check_result(
-                ANY, True, extra_codes=(zookeeper.NONODE,))
+                ANY, DEFERRED_MATCH, extra_codes=(zookeeper.NONODE,))
             self.mocker.result(SyntaxError())
             self.mocker.replay()
             return client.exists("/zebra-moon")
@@ -352,7 +358,6 @@ class ClientTests(ZookeeperTestCase):
         Closing a connection with an watch outstanding behaves correctly.
         """
         d = self.client.connect()
-        zookeeper.set_debug_level(zookeeper.LOG_LEVEL_DEBUG)
 
         def node_watcher(event):
             client = getattr(self, "client", None)
@@ -576,8 +581,8 @@ class ClientTests(ZookeeperTestCase):
         d.addErrback(verify_failure)
         return d
 
-    # seems to be a segfault on this one.
-    def test_get_children_with_watch(self):
+    # seems to be a segfault on this one w/o fix for ZOOKEEPER-772
+    def xtest_get_children_with_watch(self):
         """
         The get_children method optionally takes a watcher callable which will
         be notified when the node is modified, or a child deleted or added.
@@ -1048,8 +1053,9 @@ class ClientTests(ZookeeperTestCase):
         d = self.client.connect()
 
         def connect_again(client):
-            self.assertRaises(
-                zookeeper.ZooKeeperException, client.connect)
+            d = client.connect()
+            self.failUnlessFailure(d, zookeeper.ZooKeeperException)
+            return d
 
         d.addCallback(connect_again)
         return d
@@ -1066,8 +1072,8 @@ class ClientTests(ZookeeperTestCase):
         d = self.client.connect()
 
         def verify_failure(client):
-            self.assertRaises(
-                zookeeper.ZooKeeperException, client.create, "/abc")
+            d = client.create("/abc")
+            self.failUnlessFailure(d, zookeeper.ZooKeeperException)
 
         d.addCallback(verify_failure)
         return d
