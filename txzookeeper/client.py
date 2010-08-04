@@ -407,7 +407,7 @@ class ZookeeperClient(object):
 
         def watcher(*args):
             d.callback(ClientEvent(*args))
-        self._get(path, watcher), d
+        return self._get(path, watcher), d
 
     def get_children(self, path):
         """
@@ -526,10 +526,7 @@ class ZookeeperClient(object):
         if not callable(watcher):
             raise SyntaxError("Invalid Watcher %r" % (watcher))
         watcher = self._wrap_watcher(watcher)
-        result = zookeeper.set_watcher(self.handle, watcher)
-        error = self._check_result(result)
-        if error:
-            raise error
+        zookeeper.set_watcher(self.handle, watcher)
 
     def sync(self, path="/"):
         """

@@ -322,11 +322,16 @@ class ClientTests(ZookeeperTestCase):
         """
         d = self.client.connect()
 
+        def inject_error(result_code, d, extra_codes=None):
+            error = SyntaxError()
+            d.errback(error)
+            return error
+
         def check_exists(client):
             mock_client = self.mocker.patch(client)
             mock_client._check_result(
                 ANY, DEFERRED_MATCH, extra_codes=(zookeeper.NONODE,))
-            self.mocker.result(SyntaxError())
+            self.mocker.call(inject_error)
             self.mocker.replay()
             return client.exists("/zebra-moon")
 
@@ -567,10 +572,19 @@ class ClientTests(ZookeeperTestCase):
     def test_get_children_with_error(self):
         d = self.client.connect()
 
+        def inject_error(result_code, d):
+            error = SyntaxError()
+            d.errback(error)
+            return error
+
         def get_children(client):
             mock_client = self.mocker.patch(self.client)
-            mock_client._check_result(ANY, True)
-            self.mocker.result(SyntaxError())
+            # mock once for the api call
+            mock_client._check_result(ANY, DEFERRED_MATCH)
+            self.mocker.result(None)
+            # mock twice for the async result
+            mock_client._check_result(ANY, DEFERRED_MATCH)
+            self.mocker.call(inject_error)
             self.mocker.replay()
             return client.get_children("/tower")
 
@@ -582,7 +596,7 @@ class ClientTests(ZookeeperTestCase):
         return d
 
     # seems to be a segfault on this one w/o fix for ZOOKEEPER-772
-    def xtest_get_children_with_watch(self):
+    def test_get_children_with_watch(self):
         """
         The get_children method optionally takes a watcher callable which will
         be notified when the node is modified, or a child deleted or added.
@@ -778,10 +792,19 @@ class ClientTests(ZookeeperTestCase):
 
         acl = dict(scheme="digest", id="a:b", perms=zookeeper.PERM_ALL)
 
+        def inject_error(result, d):
+            error = zookeeper.NoNodeException()
+            d.errback(error)
+            return error
+
         def set_acl(client):
             mock_client = self.mocker.patch(client)
-            mock_client._check_result(ANY, True)
-            self.mocker.result(zookeeper.NoNodeException())
+            # mock once for the api call
+            mock_client._check_result(ANY, DEFERRED_MATCH)
+            self.mocker.result(None)
+            # mock twice for the async result
+            mock_client._check_result(ANY, DEFERRED_MATCH)
+            self.mocker.call(inject_error)
             self.mocker.replay()
             return client.set_acl("/zebra-moon22", [acl])
 
@@ -820,13 +843,20 @@ class ClientTests(ZookeeperTestCase):
         """
         d = self.client.connect()
 
+        def inject_error(result, d):
+            error = zookeeper.ZooKeeperException()
+            d.errback(error)
+            return error
+
         def create_node(client):
             return client.create("/moose")
 
         def get_acl(path):
             mock_client = self.mocker.patch(self.client)
-            mock_client._check_result(ANY, True)
-            self.mocker.result(zookeeper.ZooKeeperException("foobar"))
+            mock_client._check_result(ANY, DEFERRED_MATCH)
+            self.mocker.result(None)
+            mock_client._check_result(ANY, DEFERRED_MATCH)
+            self.mocker.call(inject_error)
             self.mocker.replay()
             return self.client.get_acl(path)
 
@@ -886,13 +916,20 @@ class ClientTests(ZookeeperTestCase):
         """
         d = self.client.connect()
 
+        def inject_error(result_code, d):
+            error = zookeeper.ZooKeeperException("foobar")
+            d.errback(error)
+            return error
+
         def create_node(client):
             return client.create("/abc")
 
         def client_sync(path):
             mock_client = self.mocker.patch(self.client)
-            mock_client._check_result(ANY, True)
-            self.mocker.result(zookeeper.ZooKeeperException("foobar"))
+            mock_client._check_result(ANY, DEFERRED_MATCH)
+            self.mocker.result(None)
+            mock_client._check_result(ANY, DEFERRED_MATCH)
+            self.mocker.call(inject_error)
             self.mocker.replay()
             return self.client.sync(path)
 
@@ -961,7 +998,7 @@ class ClientTests(ZookeeperTestCase):
             return client.set_connection_watcher(1)
 
         def verify_invalid(failure):
-            self.assertEqual(failure.value.args, ("invalid watcher",))
+            self.assertEqual(failure.value.args, ("Invalid Watcher 1",))
             self.assertTrue(isinstance(failure.value, SyntaxError))
 
         d.addCallback(set_invalid_watcher)
