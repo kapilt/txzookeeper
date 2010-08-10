@@ -8,8 +8,6 @@ from txzookeeper.client import NotConnectedException
 from txzookeeper.queue import Queue, ReliableQueue, SerializedQueue, QueueItem
 from txzookeeper.tests import ZookeeperTestCase, utils
 
-from mocker import ANY
-
 
 class QueueTests(ZookeeperTestCase):
 

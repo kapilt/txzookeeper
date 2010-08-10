@@ -1,17 +1,18 @@
-import hashlib
+
 import base64
-
-import zookeeper
-
-from mocker import ANY, MATCH
+import hashlib
 
 from twisted.internet.defer import Deferred
 from twisted.internet.base import DelayedCall
 
-from txzookeeper.tests import ZookeeperTestCase, utils
+import zookeeper
+
 from txzookeeper.client import (
     ZookeeperClient, ZOO_OPEN_ACL_UNSAFE, ConnectionTimeoutException,
     ConnectionException, ClientEvent)
+
+from mocker import ANY
+from txzookeeper.tests import ZookeeperTestCase, utils
 
 PUBLIC_ACL = ZOO_OPEN_ACL_UNSAFE
 
