@@ -1,9 +1,12 @@
-import zookeeper
-import hashlib
+
 import base64
+import hashlib
+
+import zookeeper
 
 from twisted.internet.defer import inlineCallbacks
 from twisted.python.failure import Failure
+
 from txzookeeper.node import ZNode
 from txzookeeper.node import NodeEvent
 from txzookeeper.tests import TestCase
@@ -12,6 +15,7 @@ from txzookeeper import ZookeeperClient
 
 
 class NodeTest(TestCase):
+
     def setUp(self):
         super(NodeTest, self).setUp()
         zookeeper.set_debug_level(zookeeper.LOG_LEVEL_ERROR)

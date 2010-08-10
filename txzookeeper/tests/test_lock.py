@@ -1,11 +1,13 @@
 
-from zookeeper import NoNodeException
-from mocker import ANY
 from twisted.internet.defer import (
     inlineCallbacks, returnValue, Deferred, succeed)
 
+from zookeeper import NoNodeException
+
 from txzookeeper import ZookeeperClient
 from txzookeeper.lock import Lock, LockError
+
+from mocker import ANY
 from txzookeeper.tests import ZookeeperTestCase, utils
 
 

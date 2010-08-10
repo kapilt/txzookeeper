@@ -1,16 +1,18 @@
-import hashlib
+
 import base64
+import hashlib
+
+from twisted.internet.defer import Deferred
+from twisted.internet.base import DelayedCall
 
 import zookeeper
 
-from mocker import ANY
-
-from twisted.internet.defer import Deferred
-
-from txzookeeper.tests import ZookeeperTestCase, utils
 from txzookeeper.client import (
     ZookeeperClient, ZOO_OPEN_ACL_UNSAFE, ConnectionTimeoutException,
     ConnectionException, ClientEvent)
+
+from mocker import ANY
+from txzookeeper.tests import ZookeeperTestCase, utils
 
 PUBLIC_ACL = ZOO_OPEN_ACL_UNSAFE
 
@@ -30,6 +32,34 @@ class ClientTests(ZookeeperTestCase):
         if self.client2 and self.client2.connected:
             self.client2.close()
         super(ClientTests, self).tearDown()
+
+    def test_wb_connect_after_timeout(self):
+        """
+        Test an odd error scenario. If the zookeeper client succeeds in
+        connecting after a timeout, the connection should be closed, as
+        the connect deferred has already fired.
+        """
+        mock_client = self.mocker.patch(self.client)
+        mock_client.close()
+
+        def close_state():
+            # Ensure the client state variable is correct after the close call.
+            self.client.connected = False
+
+        self.mocker.call(close_state)
+        self.mocker.replay()
+
+        task = DelayedCall(1, lambda: 1, None, None, None, None)
+        task.called = True
+
+        d = Deferred()
+        d.errback(ConnectionTimeoutException())
+
+        self.client._cb_connected(
+            task, d, None, zookeeper.CONNECTED_STATE, "/")
+
+        self.failUnlessFailure(d, ConnectionTimeoutException)
+        return d
 
     def test_connect(self):
         """
@@ -352,7 +382,6 @@ class ClientTests(ZookeeperTestCase):
         Closing a connection with an watch outstanding behaves correctly.
         """
         d = self.client.connect()
-        zookeeper.set_debug_level(zookeeper.LOG_LEVEL_DEBUG)
 
         def node_watcher(event):
             client = getattr(self, "client", None)
@@ -1001,6 +1030,8 @@ class ClientTests(ZookeeperTestCase):
         d.addCallback(assert_failed)
         d.addErrback(verify_error)
         return d
+
+    test_connect_with_error.timeout = 5
 
     def test_connect_timeout(self):
         """
