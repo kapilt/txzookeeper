@@ -1,20 +1,16 @@
 from setuptools import find_packages, setup
 
-
-#from txzookeeper import version
-
-
 long_description = """
+Twisted Library for Zookeeper, along with distributed queue and lock implementations.
 """
 
 setup(
     name="txzookeeper",
- #   version=version.txaws,
     description="Async library for Zookeeper",
     author="txZooKeeper Developers",
     author_email="txzookeeper@lists.launchpad.net",
     url="https://launchpad.net/txzookeeper",
-    license="MIT",
+    license="LGPL",
     packages=find_packages(),
     test_suite="txzookeeper.tests.egg_test_runner",
     long_description=long_description,
