@@ -1,8 +1,9 @@
-import zookeeper
-
-from functools import partial
 from collections import namedtuple
+from functools import partial
+
 from twisted.internet import defer, reactor
+
+import zookeeper
 
 # Default session timeout
 DEFAULT_SESSION_TIMEOUT = 10000
