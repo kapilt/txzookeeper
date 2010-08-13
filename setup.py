@@ -8,7 +8,7 @@ queue implementations.
 
 setup(
     name="txzookeeper",
-    version="0.0.1",
+    version="0.2.0",
     description="Twisted api for Apache Zookeeper",
     author="Ensemble Developers",
     author_email="ensemble@lists.ubuntu.com",
