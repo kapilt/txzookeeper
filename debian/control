@@ -1,0 +1,17 @@
+Source: txzookeeper
+Section: python
+Priority: optional
+XS-Python-Version: >= 2.5
+Maintainer: Ensemble Developers <ensemble@lists.ubuntu.com>
+Build-Depends: debhelper (>= 7), python-support (>= 0.6), python-central (>= 0.5), python, cdbs, python-setuptools
+Homepage: https://launchpad.net/txzookeeper
+Standards-Version: 3.8.4
+
+Package: python-txzookeeper
+Architecture: all
+Depends: ${python:Depends}, ${misc:Depends}, python-twisted, python-zookeeper
+Provides: ${python:Provides}, ${misc:Depends}
+XB-Python-Version: ${python:Versions}
+Description: Twisted-based Asynchronous Libraries for Apache Zookeeper.
+ This project's goal is to have a complete Twisted API representing the spectrum
+ of the underlying zookeeper api for constructing distributed applications.

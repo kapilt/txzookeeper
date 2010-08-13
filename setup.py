@@ -1,14 +1,16 @@
 from setuptools import find_packages, setup
 
 long_description = """
-Twisted Library for Zookeeper, along with distributed queue and lock implementations.
+Twisted API for Apache Zookeeper. Includes a distributed lock, and several
+queue implementations.
 """
 
 setup(
     name="txzookeeper",
-    description="Async library for Zookeeper",
-    author="txZooKeeper Developers",
-    author_email="txzookeeper@lists.launchpad.net",
+    version="0.2.0",
+    description="Twisted api for Apache Zookeeper",
+    author="Ensemble Developers",
+    author_email="ensemble@lists.ubuntu.com",
     url="https://launchpad.net/txzookeeper",
     license="LGPL",
     packages=find_packages(),
