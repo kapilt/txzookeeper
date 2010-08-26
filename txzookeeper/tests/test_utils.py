@@ -17,9 +17,6 @@ class RetryChangeTest(ZookeeperTestCase):
             return str(0)
         return str(int(content)+1)
 
-    def update_function_constant(self, content, stat):
-        return "hello world"
-
     def setUp(self):
         super(RetryChangeTest, self).setUp()
         self.client = ZookeeperClient("127.0.0.1:2181")
@@ -87,7 +84,7 @@ class RetryChangeTest(ZookeeperTestCase):
         """
         yield self.client.create("/animals")
         content, stat = yield self.client.get("/animals")
-        yield self.client.set("/animals", "zebra")
+        yield self.client.set("/animals", "5")
 
         real_get = self.client.get
         p_client = self.mocker.proxy(self.client)
@@ -100,10 +97,10 @@ class RetryChangeTest(ZookeeperTestCase):
         self.mocker.replay()
 
         yield retry_change(
-            p_client, "/animals", self.update_function_constant)
+            p_client, "/animals", self.update_function_increment)
 
         content, stat = yield real_get("/animals")
-        self.assertEqual(content, "hello world")
+        self.assertEqual(content, "6")
         self.assertEqual(stat["version"], 2)
 
     @inlineCallbacks
