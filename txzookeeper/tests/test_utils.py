@@ -149,3 +149,19 @@ class RetryChangeTest(ZookeeperTestCase):
         content, stat = yield real_get("/animals")
         self.assertEqual(content, "0")
         self.assertEqual(stat["version"], 0)
+
+    def test_identical_content_noop(self):
+        """
+        If the change function generates identical content to
+        the existing node, the retry change function exits without
+        modifying the node.
+        """
+        self.client.create("/animals", "hello")
+
+        def update(content, stat):
+            return content
+
+        yield retry_change(self.client, "/animals", update)
+        content, stat = self.client.get("/animals")
+        self.assertEqual(content, "hello")
+        self.assertEqual(stat["version"], 0)

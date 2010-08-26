@@ -29,6 +29,8 @@ def retry_change(client, path, change_function):
             content, stat = None, None
 
         new_content = yield change_function(content, stat)
+        if new_content == content:
+            break
 
         try:
             if create_mode:
