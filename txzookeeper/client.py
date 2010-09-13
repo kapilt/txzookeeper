@@ -142,7 +142,7 @@ class ZookeeperClient(object):
     def _exists(self, path, watcher):
         self._check_connected()
         d = defer.Deferred()
-
+    
         def _cb_exists(result_code, stat):
             error = self._check_result(
                 result_code, True, extra_codes=(zookeeper.NONODE,))
