@@ -61,6 +61,24 @@ class ClientTests(ZookeeperTestCase):
         self.failUnlessFailure(d, ConnectionTimeoutException)
         return d
 
+    def test_wb_reconnect_after_timeout_and_close(self):
+        """
+        Another odd error scenario, if a client is rapidly connected/closed,
+        the callback a previous connect can be invoked by a subsequent connect,
+        with a CONNECTING_STATE. Verify this does not attempt to invoke
+        the connect deferred again.
+        """
+        d = Deferred()
+        d.callback(True)
+
+        task = DelayedCall(1, lambda: 1, None, None, None, None)
+        task.called = True
+
+        self.assertEqual(
+            self.client._cb_connected(
+                task, d, None, zookeeper.CONNECTING_STATE, ""),
+            None)
+
     def test_connect(self):
         """
         The client can connect to a zookeeper instance.
