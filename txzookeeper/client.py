@@ -142,7 +142,7 @@ class ZookeeperClient(object):
     def _exists(self, path, watcher):
         self._check_connected()
         d = defer.Deferred()
-    
+
         def _cb_exists(result_code, stat):
             error = self._check_result(
                 result_code, True, extra_codes=(zookeeper.NONODE,))
@@ -297,17 +297,23 @@ class ZookeeperClient(object):
 
     def _cb_connected(
         self, scheduled_timeout, connect_deferred, type, state, path):
+
         # Cancel the timeout delayed task if it hasn't fired.
         if scheduled_timeout.active():
             scheduled_timeout.cancel()
 
-        if connect_deferred.called and state == zookeeper.CONNECTED_STATE:
-            # If we timed out and then connected, we need to close the
-            # connection.
-            self.connected = True
-            self.close()
+        if connect_deferred.called:
+            # If we timed out and then connected, then close the conn.
+            if state == zookeeper.CONNECTED_STATE:
+                self.connected = True
+                self.close()
+            # If the client is reused across multiple connect/close
+            # cycles, and a previous connect timed out, then a
+            # subsequent connect may trigger the previous connect's
+            # handler notifying of a CONNECTING_STATE, ignore.
             return
         elif state == zookeeper.CONNECTED_STATE:
+            # Connection established.
             self.connected = True
             connect_deferred.callback(self)
             return
