@@ -506,7 +506,7 @@ class ClientTests(ZookeeperTestCase):
 
         def create_seq_node(path):
             return self.client.create(
-                "/seq-a/seq-", flags=zookeeper.EPHEMERAL|zookeeper.SEQUENCE)
+                "/seq-a/seq-", flags=zookeeper.EPHEMERAL | zookeeper.SEQUENCE)
 
         def get_children(path):
             return self.client.get_children("/seq-a")
