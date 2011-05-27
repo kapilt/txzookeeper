@@ -1,15 +1,24 @@
-from setuptools import find_packages, setup
+import sys, re
 
-import txzookeeper
+from setuptools import find_packages, setup
 
 long_description = """
 Twisted API for Apache Zookeeper. Includes a distributed lock, and several
 queue implementations.
 """
 
+# Parse directly to avoid build-time dependencies on zookeeper, twisted, etc.
+for line in open("txzookeeper/__init__.py"):
+    m = re.match('version = "(.*)"', line)
+    if m:
+        version = m.group(1)
+        break
+else:
+    sys.exit("error: can't find version information")
+
 setup(
     name="txzookeeper",
-    version=txzookeeper.version,
+    version=version,
     description="Twisted api for Apache Zookeeper",
     author="Ensemble Developers",
     author_email="ensemble@lists.ubuntu.com",
