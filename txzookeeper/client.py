@@ -69,6 +69,8 @@ class ClientEvent(namedtuple("ClientEvent", 'type, connection_state, path')):
     """
 
     type_name_map = {
+        -2: "notwatching",
+        -1: "session",
         1: 'created',
         2: 'deleted',
         3: 'changed',
