@@ -288,14 +288,17 @@ class ClientTests(ZookeeperTestCase):
             return self.client.create("/foobar-watched", "rabbit")
 
         def get_node(path):
-            return self.client.get_and_watch(path)
+            data, watch = self.client.get_and_watch(path)
+            return data.addCallback(lambda x: (watch,))
 
-        def new_connection((data, watch)):
+        def new_connection((watch,)):
             self.client2 = ZookeeperClient("127.0.0.1:2181")
-            return self.client2.connect(), watch
+            return self.client2.connect().addCallback(
+                lambda x, y=None, z=None: (x, watch))
 
         def trigger_watch((client, watch)):
             zookeeper.delete(self.client2.handle, "/foobar-watched")
+            self.client2.close()
             return watch
 
         def verify_watch(event):
@@ -806,7 +809,7 @@ class ClientTests(ZookeeperTestCase):
         def verify_node_access(stat):
             self.assertEqual(stat['version'], 1)
             self.assertEqual(stat['dataLength'], 3)
-            self.assertTrue(failed) # we should have hit the errback
+            self.assertTrue(failed)  # we should have hit the errback
 
         d.addCallback(add_auth_one)
         d.addCallback(create_node)
@@ -1039,7 +1042,7 @@ class ClientTests(ZookeeperTestCase):
         d = self.client.connect()
 
         def verify_session_timeout(client):
-            self.assertEqual(client.session_timeout, 4000)
+            self.assertEqual(client.session_timeout, 3000)
 
         d.addCallback(verify_session_timeout)
         return d
