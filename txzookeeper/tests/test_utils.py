@@ -15,7 +15,7 @@ class RetryChangeTest(ZookeeperTestCase):
     def update_function_increment(self, content, stat):
         if not content:
             return str(0)
-        return str(int(content)+1)
+        return str(int(content) + 1)
 
     def setUp(self):
         super(RetryChangeTest, self).setUp()
