@@ -41,6 +41,37 @@ ERROR_MAPPING = {
     zookeeper.SYSTEMERROR: zookeeper.SystemErrorException,
     zookeeper.UNIMPLEMENTED: zookeeper.UnimplementedException}
 
+# Mapping of connection state values to human strings.
+STATE_NAME_MAPPING = {
+    zookeeper.ASSOCIATING_STATE: "associating",
+    zookeeper.AUTH_FAILED_STATE: "auth-failed",
+    zookeeper.CONNECTED_STATE: "connected",
+    zookeeper.CONNECTING_STATE: "connecting",
+    zookeeper.EXPIRED_SESSION_STATE: "expired",
+}
+
+# Mapping of event type to human string.
+TYPE_NAME_MAPPING = {
+    zookeeper.NOTWATCHING_EVENT: "notwatching",
+    zookeeper.SESSION_EVENT: "session",
+    zookeeper.CREATED_EVENT: 'created',
+    zookeeper.DELETED_EVENT: 'deleted',
+    zookeeper.CHANGED_EVENT: 'changed',
+    zookeeper.CHILD_EVENT: 'child'}
+
+
+def debug_symbols(sequence):
+    res = []
+    for symbol in sequence:
+        for i in dir(zookeeper):
+            v = getattr(zookeeper, i)
+            if symbol == v:
+                res.append((i, symbol))
+                break
+        else:
+            res.append((None, symbol))
+    return res
+
 
 class NotConnectedException(zookeeper.ZooKeeperException):
     """
@@ -53,6 +84,18 @@ class ConnectionException(zookeeper.ZooKeeperException):
     """
     Raised if an error occurs during the client's connection attempt.
     """
+
+    @property
+    def state_name(self):
+        return STATE_NAME_MAPPING[self.args[2]]
+
+    @property
+    def type_name(self):
+        return TYPE_NAME_MAPPING[self.args[1]]
+
+    def __str__(self):
+        return "<txzookeeper.ConnectionException type: %s state: %s>" % (
+            self.type_name, self.state_name)
 
 
 class ConnectionTimeoutException(zookeeper.ZooKeeperException):
@@ -68,17 +111,9 @@ class ClientEvent(namedtuple("ClientEvent", 'type, connection_state, path')):
     some event on the zookeeper client that the watch was requested on.
     """
 
-    type_name_map = {
-        -2: "notwatching",
-        -1: "session",
-        1: 'created',
-        2: 'deleted',
-        3: 'changed',
-        4: 'child'}
-
     @property
     def type_name(self):
-        return self.type_name_map[self.type]
+        return TYPE_NAME_MAPPING[self.type]
 
     def __repr__(self):
         return  "<ClientEvent %s at %r>" % (self.type_name, self.path)
@@ -173,6 +208,7 @@ class ZookeeperClient(object):
         """
 
         def wrapper(handle, *args):  # pragma: no cover
+            print handle, debug_symbols(args)
             reactor.callFromThread(func, *args)
         return wrapper
 
@@ -260,7 +296,7 @@ class ZookeeperClient(object):
         self._check_result(result)
         return result
 
-    def connect(self, servers=None, timeout=10):
+    def connect(self, servers=None, timeout=10, client_id=None):
         """
         Establish a connection to the given zookeeper server(s).
 
@@ -268,6 +304,8 @@ class ZookeeperClient(object):
                         connect to.
         @param timeout: How many seconds to wait on a connection to the
                         zookeeper servers.
+
+        @param session_id:
         @returns A deferred that's fired when the connection is established.
         """
         d = defer.Deferred()
@@ -292,8 +330,16 @@ class ZookeeperClient(object):
         if servers is not None:
             self._servers = servers
 
-        self.handle = zookeeper.init(
-            self._servers, callback, self._session_timeout)
+        # Assemble client id if specified.
+        if client_id:
+            print
+            print "connect w/ client id",
+            print self._servers, callback, self._session_timeout, client_id
+            self.handle = zookeeper.init(
+                self._servers, callback, self._session_timeout, client_id)
+        else:
+            self.handle = zookeeper.init(
+                self._servers, callback, self._session_timeout)
 
         return d
 
@@ -307,6 +353,7 @@ class ZookeeperClient(object):
         if connect_deferred.called:
             # If we timed out and then connected, then close the conn.
             if state == zookeeper.CONNECTED_STATE:
+                print "state", self.handle, debug_symbols((self.state, state,))
                 self.connected = True
                 self.close()
             # If the client is reused across multiple connect/close

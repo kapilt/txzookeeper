@@ -1042,7 +1042,7 @@ class ClientTests(ZookeeperTestCase):
         d = self.client.connect()
 
         def verify_session_timeout(client):
-            self.assertEqual(client.session_timeout, 3000)
+            self.assertEqual(client.session_timeout, 4000)
 
         d.addCallback(verify_session_timeout)
         return d
@@ -1076,6 +1076,41 @@ class ClientTests(ZookeeperTestCase):
 
         d.addCallback(set_invalid_watcher)
         d.addErrback(verify_invalid)
+        return d
+
+    def test_session_expired_event(self):
+        """
+        A client session can be reattached to in a separate connection,
+        if the a session is expired, using the zookeeper connection will
+        raise a SessionExpiredException.
+        """
+        d = self.client.connect()
+
+        def new_connection_same_connection(client):
+            self.assertEqual(client.state, zookeeper.CONNECTED_STATE)
+            return ZookeeperClient("127.0.0.1:2181").connect(
+                client_id=client.client_id)
+
+        def close_new_connection(client):
+            self.assertEqual(self.client.client_id, client.client_id)
+            self.assertEqual(client.state, zookeeper.CONNECTED_STATE)
+            # Closing one connection, will close the session
+            print "close"
+            client.close()
+            # And continued use of the other client will get a
+            # disconnect exception.
+            return self.client.exists("/")
+
+        def verify_original_closed(failure):
+            failure.trap(zookeeper.SessionExpiredException)
+            print "client close"
+            self.client.close()
+            return self.client.connect()
+
+        d.addCallback(new_connection_same_connection)
+        d.addCallback(close_new_connection)
+        d.addErrback(verify_original_closed)
+
         return d
 
     def test_connect_with_server(self):
