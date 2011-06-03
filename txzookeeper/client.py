@@ -125,6 +125,7 @@ class ZookeeperClient(object):
     def __init__(self, servers=None, session_timeout=None):
         self._servers = servers
         self._session_timeout = session_timeout
+        self._session_event_callback = None
         self.connected = False
         self.handle = None
 
@@ -198,7 +199,17 @@ class ZookeeperClient(object):
             return watcher
         if not callable(watcher):
             raise SyntaxError("invalid watcher")
-        return self._zk_thread_callback(watcher)
+        return self._zk_thread_callback(
+            partial(self._session_event_wrapper, watcher))
+
+    def _session_event_wrapper(self, watcher, event_type, conn_state, path):
+        """Watch wrapper that diverts session events to a connection callback.
+        """
+        # If its a session event pass it to the session callback
+        if event_type == zookeeper.SESSION_EVENT \
+               and self._session_event_callback:
+            self._session_event_callback(event_type, conn_state, path)
+        return watcher(event_type, conn_state, path)
 
     def _zk_thread_callback(self, func):
         """
@@ -206,9 +217,7 @@ class ZookeeperClient(object):
         any user defined callback so that they are called back in the main
         thread after, zookeeper calls the wrapper.
         """
-
         def wrapper(handle, *args):  # pragma: no cover
-            print handle, debug_symbols(args)
             reactor.callFromThread(func, *args)
         return wrapper
 
@@ -332,9 +341,6 @@ class ZookeeperClient(object):
 
         # Assemble client id if specified.
         if client_id:
-            print
-            print "connect w/ client id",
-            print self._servers, callback, self._session_timeout, client_id
             self.handle = zookeeper.init(
                 self._servers, callback, self._session_timeout, client_id)
         else:
@@ -353,7 +359,6 @@ class ZookeeperClient(object):
         if connect_deferred.called:
             # If we timed out and then connected, then close the conn.
             if state == zookeeper.CONNECTED_STATE:
-                print "state", self.handle, debug_symbols((self.state, state,))
                 self.connected = True
                 self.close()
             # If the client is reused across multiple connect/close

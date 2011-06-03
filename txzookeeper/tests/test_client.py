@@ -4,6 +4,7 @@ import hashlib
 
 from twisted.internet.defer import Deferred
 from twisted.internet.base import DelayedCall
+from twisted.python.failure import Failure
 
 import zookeeper
 
@@ -28,9 +29,10 @@ class ClientTests(ZookeeperTestCase):
         if self.client.connected:
             utils.deleteTree(handle=self.client.handle)
             self.client.close()
-        del self.client
+
         if self.client2 and self.client2.connected:
             self.client2.close()
+
         super(ClientTests, self).tearDown()
 
     def test_wb_connect_after_timeout(self):
@@ -1086,30 +1088,49 @@ class ClientTests(ZookeeperTestCase):
         """
         d = self.client.connect()
 
+        class StopTest(Exception):
+            pass
+
         def new_connection_same_connection(client):
             self.assertEqual(client.state, zookeeper.CONNECTED_STATE)
             return ZookeeperClient("127.0.0.1:2181").connect(
-                client_id=client.client_id)
+                client_id=client.client_id).addErrback(
+                guard_session_expired, client)
+
+        def guard_session_expired(failure, client):
+            # On occassion we get a session expired event while connecting.
+            failure.trap(ConnectionException)
+            self.assertEqual(failure.value.state_name, "expired")
+            # Stop the test from proceeding
+            raise StopTest()
 
         def close_new_connection(client):
+            # Verify both connections are using same session
             self.assertEqual(self.client.client_id, client.client_id)
             self.assertEqual(client.state, zookeeper.CONNECTED_STATE)
+
             # Closing one connection, will close the session
-            print "close"
             client.close()
-            # And continued use of the other client will get a
+
+            # Continued use of the other client will get a
             # disconnect exception.
             return self.client.exists("/")
 
         def verify_original_closed(failure):
-            failure.trap(zookeeper.SessionExpiredException)
-            print "client close"
+            if not isinstance(failure, Failure):
+                self.fail("Test did not raise exception.")
+            failure.trap(
+                zookeeper.SessionExpiredException,
+                zookeeper.ConnectionLossException)
+
+            #print "client close"
             self.client.close()
+            #print "creating new client for teardown"
             return self.client.connect()
 
         d.addCallback(new_connection_same_connection)
         d.addCallback(close_new_connection)
-        d.addErrback(verify_original_closed)
+        d.addBoth(verify_original_closed)
 
         return d
 
