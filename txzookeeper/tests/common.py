@@ -4,13 +4,13 @@ import shutil
 import subprocess
 import tempfile
 
-from contextlib import contextmanager
+from itertools import chain
+from collections import namedtuple
 from glob import glob
 
 
-__all__ = ("ManagedZooKeeper",
-           "zookeeper_test_context",
-           "get_zookeeper_test_address")
+ServerInfo = namedtuple(
+    "ServerInfo", "server_id client_port election_port leader_port")
 
 
 class ManagedZooKeeper(object):
@@ -21,17 +21,16 @@ class ManagedZooKeeper(object):
     future, we may want to do that, especially when run in a
     Hudson/Buildbot context, to ensure more test robustness."""
 
-    def __init__(self, install_path, port=28181, peers=None):
+    def __init__(self, software_path, server_info, peers=()):
         """Define the ZooKeeper test instance.
 
         @param install_path: The path to the install for ZK
         @param port: The port to run the managed ZK instance
         """
-
-        self.install_path = install_path
-        self.port = port
+        self.install_path = software_path
+        self.server_info = server_info
         self.host = "127.0.0.1"
-        self.peers = None
+        self.peers = peers
 
     def run(self):
         """Run the ZooKeeper instance under a temporary directory.
@@ -46,35 +45,32 @@ class ManagedZooKeeper(object):
 
         # various setup steps
         os.mkdir(log_path)
-
+        os.mkdir(data_path)
         with open(config_path, "w") as config:
             config.write("""
 tickTime=2000
 dataDir=%s
 clientPort=%s
 maxClientCnxns=0
-""" % (data_path, self.port))
+""" % (data_path, self.server_info.client_port))
 
         # setup a replicated setup if peers are specified
         if self.peers:
-            server_id = len(self.peers) + 1
-            peers_cfg = ["%s:%s:%s" % p for p in self.peers]
-            peer_entry = "server." + str(server_id) + "=localhost:%d:%d" % (
-                2000 + server_id, 3000 + server_id)
-            peers_cfg.append("%s:%s:%s" % (peer_entry))
-
-            peers_cfg = "\n".join(self.peers)
+            servers_cfg = []
+            for p in chain((self.server_info,), self.peers):
+                servers_cfg.append("server.%s=localhost:%s:%s" % (
+                    p.server_id, p.leader_port, p.election_port))
 
             with open(config_path, "a") as config:
                 config.write("""
 initLimit=4
 syncLimit=2
 %s
-""" % peers_cfg)
-            # Write server ids into datadir
+""" % ("\n".join(servers_cfg)))
 
-            with open(os.path.join(data_path, "myid"), "w") as myid_file:
-                myid_file.write(str(server_id))
+        # Write server ids into datadir
+        with open(os.path.join(data_path, "myid"), "w") as myid_file:
+            myid_file.write(str(self.server_info.server_id))
 
         with open(log4j_path, "w") as log4j:
             log4j.write("""
@@ -97,6 +93,7 @@ log4j.appender.ROLLINGFILE.File=zookeeper.log
                   "org.apache.zookeeper.server.quorum.QuorumPeerMain",
                   config_path],
             )
+        self._running = True
 
     @property
     def classpath(self):
@@ -123,45 +120,59 @@ log4j.appender.ROLLINGFILE.File=zookeeper.log
     @property
     def address(self):
         """Get the address of the ZooKeeper instance."""
-        return "%s:%s" % (self.host, self.port)
+        return "%s:%s" % (self.host, self.client_port)
+
+    @property
+    def running(self):
+        return self._running
+
+    @property
+    def client_port(self):
+        return self.server_info.client_port
 
     def stop(self):
         """Stop the ZooKeeper instance and cleanup."""
         self.process.terminate()
         self.process.wait()
         shutil.rmtree(self.working_path)
+        self._running = False
 
 
-"""Global to manage the ZK test address - only for testing of course!"""
-_zookeeper_address = "127.0.0.1:2181"
+class ZookeeperCluster(object):
 
+    def __init__(self, install_path, size=3, port_offset=20000):
+        self._install_path = install_path
+        self._servers = []
 
-def get_test_zookeeper_address():
-    """Get the current test ZK address, such as '127.0.0.1:2181'"""
-    return _zookeeper_address
+        # Calculate ports and peer group
+        port = port_offset
+        peers = []
 
+        for i in range(size):
+            port += i * 10
+            info = ServerInfo(i + 1, port, port + 1, port + 2)
+            peers.append(info)
 
-@contextmanager
-def zookeeper_test_context(install_path, port=28181):
-    """Manage context to run/stop a ZooKeeper for testing and related vars.
+        # Instantiate Managed ZK Servers
+        for i in range(size):
+            server_peers = list(peers)
+            server_info = server_peers.pop(i)
+            self._servers.append(
+                ManagedZooKeeper(
+                    self._install_path, server_info, server_peers))
 
-    @param install_path: The path to the install for ZK
-    @param port: The port to run the managed ZK instance
-    """
-    global _zookeeper_address
+    def __getitem__(self, k):
+        return self._servers[k]
 
-    saved_zookeeper_address = _zookeeper_address
-    saved_env = os.environ.get("ZOOKEEPER_ADDRESS")
-    test_zookeeper = ManagedZooKeeper(install_path, port)
-    test_zookeeper.run()
-    os.environ["ZOOKEEPER_ADDRESS"] = test_zookeeper.address
-    _zookeeper_address = test_zookeeper.address
-    try:
-        yield test_zookeeper
-    finally:
-        test_zookeeper.stop()
-        _zookeeper_address = saved_zookeeper_address
-        if saved_env:
-            os.environ["ZOOKEEPER_ADDRESS"] = saved_env
-        else:
-            del os.environ["ZOOKEEPER_ADDRESS"]
+    def __iter__(self):
+        return iter(self._servers)
+
+    def start(self):
+        for server in self:
+            server.run()
+
+    def stop(self):
+        for server in self:
+            if server.is_running():
+                server.stop()
+        self._servers = []
