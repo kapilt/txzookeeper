@@ -1,0 +1,2 @@
+version=3
+https://launchpad.net/txzookeeper .+download/txzookeeper-([\d.]+)\.tar.gz

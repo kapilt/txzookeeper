@@ -1,0 +1,19 @@
+txzookeeper (0.2.1-0ubuntu2) natty; urgency=low
+
+  * Preparing for daily build.
+
+ -- Gustavo Niemeyer <niemeyer@canonical.com>  Fri, 27 May 2011 11:03:11 -0300
+
+txzookeeper (0.2.1-0ubuntu1) maverick; urgency=low
+
+  * New utility function for retrying changes on a node
+ 
+  * Fix for connect/close/connect cycling on a connection.
+
+ -- Kapil Thangavelu (Work Key) <kapil.thangavelu@canonical.com>  Wed, 12 January 2011 14:03:06 -0500
+
+txzookeeper (0.0.1-0ubuntu1) lucid; urgency=low
+
+  * Initial Package
+
+ -- Kapil Thangavelu (Work Key) <kapil.thangavelu@canonical.com>  Mon, 12 July 2010 14:03:06 -0500

@@ -1,7 +1,9 @@
-import zookeeper
-
 from collections import namedtuple
+from functools import partial
+
 from twisted.internet import defer, reactor
+
+import zookeeper
 
 # Default session timeout
 DEFAULT_SESSION_TIMEOUT = 10000
@@ -67,6 +69,8 @@ class ClientEvent(namedtuple("ClientEvent", 'type, connection_state, path')):
     """
 
     type_name_map = {
+        -2: "notwatching",
+        -1: "session",
         1: 'created',
         2: 'deleted',
         3: 'changed',
@@ -284,22 +288,16 @@ class ZookeeperClient(object):
             return defer.fail(
                 zookeeper.ZooKeeperException("Already Connected"))
 
-        def _cb_connected(type, state, path):
-            delayed.cancel()
-            if state == zookeeper.CONNECTED_STATE:
-                self.connected = True
-                d.callback(self)
-            else:
-                d.errback(
-                    ConnectionException("connection error", type, state, path))
-
-        callback = self._zk_thread_callback(_cb_connected)
-
-        # use a scheduled function to ensure a timeout
+        # Use a scheduled function to ensure a timeout.
         def _check_timeout():
             d.errback(
                 ConnectionTimeoutException("could not connect before timeout"))
-        delayed = reactor.callLater(timeout, _check_timeout)
+
+        scheduled_timeout = reactor.callLater(timeout, _check_timeout)
+
+        # Assemble an on connect callback with closure variable access.
+        callback = partial(self._cb_connected, scheduled_timeout, d)
+        callback = self._zk_thread_callback(callback)
 
         if self._session_timeout is None:
             self._session_timeout = DEFAULT_SESSION_TIMEOUT
@@ -311,6 +309,32 @@ class ZookeeperClient(object):
             self._servers, callback, self._session_timeout)
 
         return d
+
+    def _cb_connected(
+        self, scheduled_timeout, connect_deferred, type, state, path):
+
+        # Cancel the timeout delayed task if it hasn't fired.
+        if scheduled_timeout.active():
+            scheduled_timeout.cancel()
+
+        if connect_deferred.called:
+            # If we timed out and then connected, then close the conn.
+            if state == zookeeper.CONNECTED_STATE:
+                self.connected = True
+                self.close()
+            # If the client is reused across multiple connect/close
+            # cycles, and a previous connect timed out, then a
+            # subsequent connect may trigger the previous connect's
+            # handler notifying of a CONNECTING_STATE, ignore.
+            return
+        elif state == zookeeper.CONNECTED_STATE:
+            # Connection established.
+            self.connected = True
+            connect_deferred.callback(self)
+            return
+
+        connect_deferred.errback(
+            ConnectionException("connection error", type, state, path))
 
     def create(self, path, data="", acls=[ZOO_OPEN_ACL_UNSAFE], flags=0):
         """

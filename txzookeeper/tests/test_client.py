@@ -1,16 +1,21 @@
-import hashlib
+
 import base64
+import hashlib
+
+from twisted.internet.defer import Deferred
+from twisted.internet.base import DelayedCall
 
 import zookeeper
 
 from mocker import ANY, MATCH
-
 from twisted.internet.defer import Deferred
-
 from txzookeeper.tests import ZookeeperTestCase, utils
 from txzookeeper.client import (
     ZookeeperClient, ZOO_OPEN_ACL_UNSAFE, ConnectionTimeoutException,
     ConnectionException, ClientEvent)
+
+from mocker import ANY
+from txzookeeper.tests import ZookeeperTestCase, utils
 
 PUBLIC_ACL = ZOO_OPEN_ACL_UNSAFE
 
@@ -36,6 +41,54 @@ class ClientTests(ZookeeperTestCase):
         if self.client2 and self.client2.connected:
             self.client2.close()
         super(ClientTests, self).tearDown()
+
+    def test_wb_connect_after_timeout(self):
+        """
+        Test an odd error scenario. If the zookeeper client succeeds in
+        connecting after a timeout, the connection should be closed, as
+        the connect deferred has already fired.
+        """
+        mock_client = self.mocker.patch(self.client)
+        mock_client.close()
+
+        def close_state():
+            # Ensure the client state variable is correct after the close call.
+            self.client.connected = False
+
+        self.mocker.call(close_state)
+        self.mocker.replay()
+
+        task = DelayedCall(1, lambda: 1, None, None, None, None)
+        task.called = True
+
+        d = Deferred()
+        d.errback(ConnectionTimeoutException())
+
+        self.client._cb_connected(
+            task, d, None, zookeeper.CONNECTED_STATE, "/")
+
+        self.failUnlessFailure(d, ConnectionTimeoutException)
+        return d
+
+    def test_wb_reconnect_after_timeout_and_close(self):
+        """
+        Another odd error scenario, if a client instance has has
+        connect and closed methods invoked in succession multiple
+        times, and a previous callback connect timeouts, the callback
+        of a previous connect can be invoked by a subsequent connect,
+        with a CONNECTING_STATE. Verify this does not attempt to
+        invoke the connect deferred again.
+        """
+        d = Deferred()
+        d.callback(True)
+
+        task = DelayedCall(1, lambda: 1, None, None, None, None)
+        task.called = True
+
+        self.assertEqual(
+            self.client._cb_connected(
+                task, d, None, zookeeper.CONNECTING_STATE, ""),
+            None)
 
     def test_connect(self):
         """
@@ -358,6 +411,33 @@ class ClientTests(ZookeeperTestCase):
         d.addCallback(verify_exists)
         return d
 
+    def test_exist_watch_with_node_change(self):
+        """
+        Setting an exist watches on existing node will also respond to
+        node changes.
+        """
+        d = self.client.connect()
+
+        def create_node(client):
+            return client.create("/rome")
+
+        def check_exists(path):
+            existsd, w = self.client.exists_and_watch(path)
+            w.addCallback(node_watcher)
+            return existsd
+
+        def node_watcher(event):
+            self.assertEqual(event.type_name, "changed")
+
+        def verify_exists(node_stat):
+            self.assertTrue(node_stat)
+            return self.client.set("/rome", "magic")
+
+        d.addCallback(create_node)
+        d.addCallback(check_exists)
+        d.addCallback(verify_exists)
+        return d
+
     def test_exists_with_watcher_and_close(self):
         """
         Closing a connection with an watch outstanding behaves correctly.
@@ -440,7 +520,7 @@ class ClientTests(ZookeeperTestCase):
 
         def create_seq_node(path):
             return self.client.create(
-                "/seq-a/seq-", flags=zookeeper.EPHEMERAL|zookeeper.SEQUENCE)
+                "/seq-a/seq-", flags=zookeeper.EPHEMERAL | zookeeper.SEQUENCE)
 
         def get_children(path):
             return self.client.get_children("/seq-a")
@@ -595,7 +675,7 @@ class ClientTests(ZookeeperTestCase):
         d.addErrback(verify_failure)
         return d
 
-    # seems to be a segfault on this one w/o fix for ZOOKEEPER-772
+    # seems to be a segfault on this one, must be running latest zk
     def test_get_children_with_watch(self):
         """
         The get_children method optionally takes a watcher callable which will
@@ -630,8 +710,44 @@ class ClientTests(ZookeeperTestCase):
         d.addCallback(new_connection)
         d.addCallback(trigger_watch)
         d.addCallback(verify_observed)
-        #d.addCallback(verify_observed)
         return d
+
+    def test_get_children_with_watch_container_deleted(self):
+        """
+        Establishing a child watch on a path, and then deleting the path,
+        will fire a child event watch on the container. This seems a little
+        counterintutive, but zookeeper docs state they do this as a signal
+        the container will never have any children. And logically you'd
+        would want to fire, so that in case the container node gets recreated
+        later and the watch fires, you don't want to the watch to fire then,
+        as its a technically a different container.
+        """
+
+        d = self.client.connect()
+        watch_deferred = Deferred()
+
+        def create_node(client):
+            return self.client.create("/prison")
+
+        def get_children(path):
+            childd, w = self.client.get_children_and_watch(path)
+            w.addCallback(verify_watch)
+            return childd
+
+        def delete_node(children):
+            return self.client.delete("/prison")
+
+        def verify_watch(event):
+            self.assertTrue(event.type_name, "child")
+            watch_deferred.callback(None)
+
+        d.addCallback(create_node)
+        d.addCallback(get_children)
+        d.addCallback(delete_node)
+
+        return watch_deferred
+
+    test_get_children_with_watch_container_deleted.timeout = 5
 
     def test_get_no_children(self):
         """
@@ -1043,6 +1159,8 @@ class ClientTests(ZookeeperTestCase):
         d.addCallback(assert_failed)
         d.addErrback(verify_error)
         return d
+
+    test_connect_with_error.timeout = 5
 
     def test_connect_timeout(self):
         """

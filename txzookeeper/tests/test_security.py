@@ -222,7 +222,7 @@ class SecurityTests(ZookeeperTestCase):
         d.addCallback(verify_node_stat)
         yield d
 
-    def test_eve_can_discover_node_acl_(self):
+    def test_eve_can_discover_node_acl(self):
         """
         One weakness of the zookeeper security model, is that it enables
         discovery of a node existance, its node stats, and its acl to
