@@ -97,6 +97,17 @@ class ConnectionException(zookeeper.ZooKeeperException):
         return "<txzookeeper.ConnectionException type: %s state: %s>" % (
             self.type_name, self.state_name)
 
+    @staticmethod
+    def is_connection_exception(e):
+        """
+        For connection errors in response to api calls, a utility method
+        to determine if the cause is a connection exception.
+        """
+        return isinstance(e,
+                          (zookeeper.ClosingException,
+                           zookeeper.ConnectionLossException,
+                           zookeeper.SessionExpiredException))
+
 
 class ConnectionTimeoutException(zookeeper.ZooKeeperException):
     """
@@ -115,8 +126,13 @@ class ClientEvent(namedtuple("ClientEvent", 'type, connection_state, path')):
     def type_name(self):
         return TYPE_NAME_MAPPING[self.type]
 
+    @property
+    def state_name(self):
+        return STATE_NAME_MAPPING[self.connection_state]
+
     def __repr__(self):
-        return  "<ClientEvent %s at %r>" % (self.type_name, self.path)
+        return  "<ClientEvent %s at %r state: %s>" % (
+            self.type_name, self.path, self.state_name)
 
 
 class ZookeeperClient(object):
@@ -126,6 +142,7 @@ class ZookeeperClient(object):
         self._servers = servers
         self._session_timeout = session_timeout
         self._session_event_callback = None
+        self._connection_error_callback = None
         self.connected = False
         self.handle = None
 
@@ -140,9 +157,18 @@ class ZookeeperClient(object):
             error_class = ERROR_MAPPING.get(
                 result_code, zookeeper.ZooKeeperException)
             error = error_class(error_msg)
-            if callback:
+
+            if ConnectionException.is_connection_exception(error):
+                # Mark the client as disconnected.
+                self.connected = False
+                # Route connection errors to a connection level error
+                # handler if specified.
+                if self._connection_error_callback:
+                    self._connection_error_callback(self, error)
+            elif callback:
                 return error
-            raise error
+            else:
+                raise error
         return None
 
     def _get(self, path, watcher):
@@ -205,11 +231,16 @@ class ZookeeperClient(object):
     def _session_event_wrapper(self, watcher, event_type, conn_state, path):
         """Watch wrapper that diverts session events to a connection callback.
         """
-        # If its a session event pass it to the session callback
-        if event_type == zookeeper.SESSION_EVENT \
-               and self._session_event_callback:
-            self._session_event_callback(event_type, conn_state, path)
-        return watcher(event_type, conn_state, path)
+        # If its a session event pass it to the session callback, else
+        # ignore it. Session events are sent repeatedly to watchers
+        # which we have modeled after deferred, which only accept a
+        # single return value.
+        if event_type == zookeeper.SESSION_EVENT:
+            if self._session_event_callback:
+                self._session_event_callback(
+                    ClientEvent(event_type, conn_state, path))
+        else:
+            return watcher(event_type, conn_state, path)
 
     def _zk_thread_callback(self, func):
         """
@@ -351,24 +382,36 @@ class ZookeeperClient(object):
 
     def _cb_connected(
         self, scheduled_timeout, connect_deferred, type, state, path):
+        """This callback is invoked through the lifecycle of the connection.
 
+        Its used for all connection level events and session events.
+        """
         # Cancel the timeout delayed task if it hasn't fired.
         if scheduled_timeout.active():
             scheduled_timeout.cancel()
 
+        # XXX/Debug
+        #print
+        #print "Session/Conn Event", ClientEvent(type, state, path)
+
+        # Update connected boolean
+        if state == zookeeper.CONNECTED_STATE:
+            self.connected = True
+        elif state != zookeeper.CONNECTING_STATE:
+            self.connected = False
+
         if connect_deferred.called:
             # If we timed out and then connected, then close the conn.
-            if state == zookeeper.CONNECTED_STATE:
-                self.connected = True
+            if state == zookeeper.CONNECTED_STATE and scheduled_timeout.called:
                 self.close()
-            # If the client is reused across multiple connect/close
-            # cycles, and a previous connect timed out, then a
-            # subsequent connect may trigger the previous connect's
-            # handler notifying of a CONNECTING_STATE, ignore.
+
+            # Send session events to the callback, this in addition to any
+            # duplicate session events that will be sent for extant watches.
+            if self._session_event_callback:
+                self._session_event_callback(ClientEvent(type, state, path))
+
             return
         elif state == zookeeper.CONNECTED_STATE:
-            # Connection established.
-            self.connected = True
             connect_deferred.callback(self)
             return
 
@@ -584,6 +627,47 @@ class ZookeeperClient(object):
         """
         watcher = self._wrap_watcher(watcher)
         zookeeper.set_watcher(self.handle, watcher)
+
+    def set_session_callback(self, callback):
+        """Set a callback to recieve session events.
+
+        Session events are by default ignored. Interested applications
+        may choose to set a session event watcher on the connection
+        to receive session events. Session events are typically broadcast
+        by the libzookeeper library to all extant watchers, but the
+        twisted integration using deferreds is not capable of recieving
+        multiple values (session events and watch events), so this
+        client drops them.
+
+        Additional details on session events
+        ------------------------------------
+        http://bit.ly/mQrOMY
+        http://bit.ly/irKpfn
+        """
+        assert callable(callback)
+        self._session_event_callback = callback
+
+    def set_connection_error_callback(self, callback):
+        """Set a callback to receive connection error exceptions.
+
+        By default the error will be raised when the client API
+        call is made, by setting a connection level error handler,
+        applications can centralize their handling of connection loss,
+        instead of having to guard every zk interaction.
+
+        The callback receives two parameters, the client instance
+        and the exception.
+        """
+        self._connection_error_callback = callback
+
+    def set_determinstic_order(self, boolean):
+        """
+        The zookeeper client will by default randomize the server hosts
+        it will connect to unless this is set to True.
+
+        This is a global setting, across connections.
+        """
+        zookeeper.deterministic_conn_order(bool(boolean))
 
     def sync(self, path="/"):
         """

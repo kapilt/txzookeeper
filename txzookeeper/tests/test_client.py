@@ -96,8 +96,10 @@ class ClientTests(ZookeeperTestCase):
         return d
 
     def test_client_event_repr(self):
-        event = ClientEvent(4, 'state', 'path')
-        self.assertEqual(repr(event), "<ClientEvent child at 'path'>")
+        event = ClientEvent(zookeeper.SESSION_EVENT,
+                            zookeeper.EXPIRED_SESSION_STATE, '')
+        self.assertEqual(repr(event),
+                         "<ClientEvent session at '' state: expired>")
 
     def test_client_event_attributes(self):
         event = ClientEvent(4, 'state', 'path')
@@ -1080,7 +1082,7 @@ class ClientTests(ZookeeperTestCase):
         d.addErrback(verify_invalid)
         return d
 
-    def test_session_expired_event(self):
+    def xtest_session_expired_event(self):
         """
         A client session can be reattached to in a separate connection,
         if the a session is expired, using the zookeeper connection will

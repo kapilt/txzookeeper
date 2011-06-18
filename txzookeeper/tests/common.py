@@ -31,21 +31,27 @@ class ManagedZooKeeper(object):
         self.server_info = server_info
         self.host = "127.0.0.1"
         self.peers = peers
+        self.working_path = tempfile.mkdtemp()
+        self._running = False
 
     def run(self):
         """Run the ZooKeeper instance under a temporary directory.
 
         Writes ZK log messages to zookeeper.log in the current directory.
         """
-        self.working_path = tempfile.mkdtemp()
         config_path = os.path.join(self.working_path, "zoo.cfg")
         log_path = os.path.join(self.working_path, "log")
         log4j_path = os.path.join(self.working_path, "log4j.properties")
         data_path = os.path.join(self.working_path, "data")
 
         # various setup steps
-        os.mkdir(log_path)
-        os.mkdir(data_path)
+        if not os.path.exists(self.working_path):
+            os.mdir(self.working_path)
+        if not os.path.exists(log_path):
+            os.mkdir(log_path)
+        if not os.path.exists(data_path):
+            os.mkdir(data_path)
+
         with open(config_path, "w") as config:
             config.write("""
 tickTime=2000
@@ -80,8 +86,8 @@ log4j.appender.ROLLINGFILE.layout=org.apache.log4j.PatternLayout
 log4j.appender.ROLLINGFILE.layout.ConversionPattern=%d{ISO8601} [myid:%X{myid}] - %-5p [%t:%C{1}@%L] - %m%n
 log4j.appender.ROLLINGFILE=org.apache.log4j.RollingFileAppender
 log4j.appender.ROLLINGFILE.Threshold=DEBUG
-log4j.appender.ROLLINGFILE.File=zookeeper.log
-""")
+log4j.appender.ROLLINGFILE.File=""" + (
+                            self.working_path + os.sep + "zookeeper.log\n"))
 
         self.process = subprocess.Popen(
             args=["java",
@@ -130,12 +136,29 @@ log4j.appender.ROLLINGFILE.File=zookeeper.log
     def client_port(self):
         return self.server_info.client_port
 
+    def reset(self):
+        """Stop the zookeeper instance, cleaning out its on disk-data."""
+        self.stop()
+        shutil.rmtree(os.path.join(self.working_path, "data"))
+        os.mkdir(os.path.join(self.working_path, "data"))
+        with open(os.path.join(self.working_path, "data", "myid"), "w") as fh:
+            fh.write(str(self.server_info.server_id))
+
     def stop(self):
-        """Stop the ZooKeeper instance and cleanup."""
+        """Stop the Zookeeper instance, retaining on disk state."""
+        if not self._running:
+            return
         self.process.terminate()
         self.process.wait()
-        shutil.rmtree(self.working_path)
         self._running = False
+
+    def destroy(self):
+        """Stop the ZooKeeper instance and destroy its on disk-state"""
+        # called by at exit handler, reimport to avoid cleanup race.
+        import shutil
+        self.stop()
+
+        shutil.rmtree(self.working_path)
 
 
 class ZookeeperCluster(object):
@@ -168,11 +191,26 @@ class ZookeeperCluster(object):
         return iter(self._servers)
 
     def start(self):
-        for server in self:
+        # Zookeeper client expresses a preference for either lower ports or
+        # lexographical ordering of hosts, to ensure that all servers have a
+        # chance to startup, start them in reverse order.
+        for server in reversed(list(self)):
             server.run()
+        # Giving the servers a moment to start, decreases the overall time
+        # required for a client to successfully connect (2s vs. 4s without
+        # the sleep).
+        import time
+        time.sleep(2)
 
     def stop(self):
         for server in self:
-            if server.is_running():
-                server.stop()
+            server.stop()
         self._servers = []
+
+    def terminate(self):
+        for server in self:
+            server.destroy()
+
+    def reset(self):
+        for server in self:
+            server.reset()
