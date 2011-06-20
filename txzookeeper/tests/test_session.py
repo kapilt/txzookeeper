@@ -5,7 +5,7 @@ import os
 import zookeeper
 
 from twisted.internet import reactor
-from twisted.internet.defer import inlineCallbacks, Deferred
+from twisted.internet.defer import inlineCallbacks, Deferred, returnValue
 
 from txzookeeper import ZookeeperClient
 
@@ -27,8 +27,8 @@ class ClientSessionTests(ZookeeperTestCase):
         self.cluster.start()
         self.client = None
         self.client2 = None
-        zookeeper.set_debug_level(0)
         zookeeper.deterministic_conn_order(True)
+        zookeeper.set_debug_level(0)
 
     def sleep(self, delay):
         """Non-blocking sleep."""
@@ -71,7 +71,7 @@ class ClientSessionTests(ZookeeperTestCase):
 
     @inlineCallbacks
     def test_client_watch_migration(self):
-        """A client will automatically rotate servers to ensure a connection.
+        """On server rotation, extant watches are still active.
 
         A client connected to multiple servers, will transparently
         migrate amongst them, as individual servers can no longer be
@@ -98,7 +98,7 @@ class ClientSessionTests(ZookeeperTestCase):
         self.cluster[0].stop()
 
         # Wait for the shutdown and cycle, if we don't wait we'll
-        # get a zookeeper connectionloss exception on occassion.
+        # get occasionally get a  zookeeper connectionloss exception.
         yield self.sleep(0.1)
 
         # The session events that would have been ignored are sent
@@ -124,10 +124,10 @@ class ClientSessionTests(ZookeeperTestCase):
             # On loss of the connection, reconnect the client w/ same session.
             yield connection.connect(
                 self.cluster[1].address, client_id=connection.client_id)
+            returnValue(23)
 
         self.client = ZookeeperClient(self.cluster[0].address)
-        self.client.set_connection_error_callback(
-            connection_error_handler)
+        self.client.set_connection_error_callback(connection_error_handler)
         yield self.client.connect()
 
         yield self.client.create("/hello")
@@ -137,12 +137,12 @@ class ClientSessionTests(ZookeeperTestCase):
         # Shutdown the server the client is connected to
         self.cluster[0].stop()
         yield self.sleep(0.1)
-        result = yield self.client.exists("/hello")
-        print result
 
-        # XXX/TODO The connection error handler isn't currently yielded on,
-        # so we need to sleep while the reconnection is being made.
-        yield self.sleep(0.3)
+        # Results in connection loss exception, and invoking of error handler.
+        result = yield self.client.exists("/hello")
+
+        # The result of the error handler is returned to the api
+        self.assertEqual(result, 23)
 
         exists = yield self.client.exists("/hello")
         self.assertTrue(exists)
@@ -198,7 +198,3 @@ class ClientSessionTests(ZookeeperTestCase):
         # Ephemeral is destroyed when the session closed.
         exists = yield self.client.exists("/hello")
         self.assertFalse(exists)
-
-    @inlineCallbacks
-    def xtest_session_expiration_handler(self):
-        pass

@@ -178,13 +178,16 @@ class ZookeeperClient(object):
                 # Route connection errors to a connection level error
                 # handler if specified.
                 if self._connection_error_callback:
-                    # The value of the deferred
+                    # The result of the connection error handler is returned
+                    # to the api.
                     d = defer.maybeDeferred(
                         self._connection_error_callback,
                         self, error)
-                    d.chain(deferred)
-                    return
+                    d.chainDeferred(deferred)
+                    return True
+
             deferred.errback(error)
+            return True
         return None
 
     def _get(self, path, watcher):
@@ -666,7 +669,9 @@ class ZookeeperClient(object):
         by the libzookeeper library to all extant watchers, but the
         twisted integration using deferreds is not capable of recieving
         multiple values (session events and watch events), so this
-        client drops them.
+        client implementation instead provides for a user defined callback
+        to be invoked with them instead. The callback recieves a single
+        parameter, the session event in the form of a ClientEvent instance.
 
         Additional details on session events
         ------------------------------------
