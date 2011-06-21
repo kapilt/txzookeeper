@@ -8,6 +8,7 @@ from twisted.internet import reactor
 from twisted.internet.defer import inlineCallbacks, Deferred, returnValue
 
 from txzookeeper import ZookeeperClient
+from txzookeeper.client import NotConnectedException
 
 from txzookeeper.tests.common import ZookeeperCluster
 from txzookeeper.tests import ZookeeperTestCase
@@ -146,6 +147,48 @@ class ClientSessionTests(ZookeeperTestCase):
 
         exists = yield self.client.exists("/hello")
         self.assertTrue(exists)
+
+    @inlineCallbacks
+    def test_client_session_expiration_event(self):
+        """A client which recieves a session expiration event.
+        """
+        session_events = []
+        events_received = Deferred()
+
+        def session_event_callback(e):
+            session_events.append(e)
+            if len(session_events) == 4:
+                events_received.callback(True)
+
+        # Connect to a node in the cluster and establish a watch
+        self.client = ZookeeperClient(self.cluster[0].address)
+        self.client.set_session_callback(session_event_callback)
+        yield self.client.connect()
+
+        child_d, watch_d = self.client.get_children_and_watch("/")
+        yield child_d
+
+        # Connect a client to the same session on a different node.
+        self.client2 = ZookeeperClient(self.cluster[0].address)
+        yield self.client2.connect(client_id=self.client.client_id)
+
+        # Close the new client and wait for the event propogation
+        yield self.client2.close()
+
+        # It can take some time for this to propagate
+        yield events_received
+        self.assertEqual(len(session_events), 4)
+        self.assertEqual(session_events[-1].state_name, "expired")
+
+        # The connection is dead without reconnecting.
+        yield self.assertFailure(self.client.exists("/"),
+                                 NotConnectedException)
+        self.assertTrue(self.client.unrecoverable())
+
+        # If a reconnect attempt is made with a dead session id
+        #yield self.client.connect(client_id=self.client.client_id)
+
+    test_client_session_expiration_event.timeout = 10
 
     @inlineCallbacks
     def test_client_reconnect_session_on_different_server(self):

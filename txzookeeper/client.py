@@ -52,25 +52,12 @@ STATE_NAME_MAPPING = {
 
 # Mapping of event type to human string.
 TYPE_NAME_MAPPING = {
-    zookeeper.NOTWATCHING_EVENT: "notwatching",
+    zookeeper.NOTWATCHING_EVENT: "not-watching",
     zookeeper.SESSION_EVENT: "session",
-    zookeeper.CREATED_EVENT: 'created',
-    zookeeper.DELETED_EVENT: 'deleted',
-    zookeeper.CHANGED_EVENT: 'changed',
-    zookeeper.CHILD_EVENT: 'child'}
-
-
-def debug_symbols(sequence):
-    res = []
-    for symbol in sequence:
-        for i in dir(zookeeper):
-            v = getattr(zookeeper, i)
-            if symbol == v:
-                res.append((i, symbol))
-                break
-        else:
-            res.append((None, symbol))
-    return res
+    zookeeper.CREATED_EVENT: "created",
+    zookeeper.DELETED_EVENT: "deleted",
+    zookeeper.CHANGED_EVENT: "changed",
+    zookeeper.CHILD_EVENT: "child"}
 
 
 class NotConnectedException(zookeeper.ZooKeeperException):
@@ -97,16 +84,16 @@ class ConnectionException(zookeeper.ZooKeeperException):
         return "<txzookeeper.ConnectionException type: %s state: %s>" % (
             self.type_name, self.state_name)
 
-    @staticmethod
-    def is_connection_exception(e):
-        """
-        For connection errors in response to api calls, a utility method
-        to determine if the cause is a connection exception.
-        """
-        return isinstance(e,
-                          (zookeeper.ClosingException,
-                           zookeeper.ConnectionLossException,
-                           zookeeper.SessionExpiredException))
+
+def is_connection_exception(e):
+    """
+    For connection errors in response to api calls, a utility method
+    to determine if the cause is a connection exception.
+    """
+    return isinstance(e,
+                      (zookeeper.ClosingException,
+                       zookeeper.ConnectionLossException,
+                       zookeeper.SessionExpiredException))
 
 
 class ConnectionTimeoutException(zookeeper.ZooKeeperException):
@@ -172,7 +159,7 @@ class ZookeeperClient(object):
                 result_code, zookeeper.ZooKeeperException)
             error = error_class(error_msg)
 
-            if ConnectionException.is_connection_exception(error):
+            if is_connection_exception(error):
                 # Mark the client as disconnected.
                 self.connected = False
                 # Route connection errors to a connection level error
@@ -415,10 +402,6 @@ class ZookeeperClient(object):
         # Cancel the timeout delayed task if it hasn't fired.
         if scheduled_timeout.active():
             scheduled_timeout.cancel()
-
-        # XXX/Debug
-        #print
-        #print "Session/Conn Event", ClientEvent(type, state, path)
 
         # Update connected boolean
         if state == zookeeper.CONNECTED_STATE:
