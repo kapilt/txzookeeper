@@ -9,14 +9,10 @@ from twisted.python.failure import Failure
 import zookeeper
 
 from mocker import ANY, MATCH
-from twisted.internet.defer import Deferred
 from txzookeeper.tests import ZookeeperTestCase, utils
 from txzookeeper.client import (
     ZookeeperClient, ZOO_OPEN_ACL_UNSAFE, ConnectionTimeoutException,
     ConnectionException, ClientEvent)
-
-from mocker import ANY
-from txzookeeper.tests import ZookeeperTestCase, utils
 
 PUBLIC_ACL = ZOO_OPEN_ACL_UNSAFE
 
@@ -657,29 +653,21 @@ class ClientTests(ZookeeperTestCase):
         return d
 
     def test_get_children_with_error(self):
+        """If the result of an api call is an error, its propgated.
+        """
         d = self.client.connect()
 
-        def inject_error(result_code, d):
-            error = SyntaxError()
-            d.errback(error)
-            return error
-
         def get_children(client):
-            mock_client = self.mocker.patch(self.client)
-            # mock once for the api call
-            mock_client._check_result(ANY, DEFERRED_MATCH)
-            self.mocker.result(None)
-            # mock twice for the async result
-            mock_client._check_result(ANY, DEFERRED_MATCH)
-            self.mocker.call(inject_error)
-            self.mocker.replay()
+            # Get the children of a nonexistant node
             return client.get_children("/tower")
 
         def verify_failure(failure):
-            self.assertTrue(isinstance(failure.value, SyntaxError))
+            self.assertTrue(isinstance(failure, Failure))
+            self.assertTrue(
+                isinstance(failure.value, zookeeper.NoNodeException))
 
         d.addCallback(get_children)
-        d.addErrback(verify_failure)
+        d.addBoth(verify_failure)
         return d
 
     # seems to be a segfault on this one, must be running latest zk
@@ -915,20 +903,7 @@ class ClientTests(ZookeeperTestCase):
 
         acl = dict(scheme="digest", id="a:b", perms=zookeeper.PERM_ALL)
 
-        def inject_error(result, d):
-            error = zookeeper.NoNodeException()
-            d.errback(error)
-            return error
-
         def set_acl(client):
-            mock_client = self.mocker.patch(client)
-            # mock once for the api call
-            mock_client._check_result(ANY, DEFERRED_MATCH)
-            self.mocker.result(None)
-            # mock twice for the async result
-            mock_client._check_result(ANY, DEFERRED_MATCH)
-            self.mocker.call(inject_error)
-            self.mocker.replay()
             return client.set_acl("/zebra-moon22", [acl])
 
         def verify_failure(failure):
@@ -971,25 +946,17 @@ class ClientTests(ZookeeperTestCase):
             d.errback(error)
             return error
 
-        def create_node(client):
-            return client.create("/moose")
-
         def get_acl(path):
-            mock_client = self.mocker.patch(self.client)
-            mock_client._check_result(ANY, DEFERRED_MATCH)
-            self.mocker.result(None)
-            mock_client._check_result(ANY, DEFERRED_MATCH)
-            self.mocker.call(inject_error)
-            self.mocker.replay()
-            return self.client.get_acl(path)
+            # Get the ACL of a nonexistant node
+            return self.client.get_acl("/moose")
 
         def verify_failure(failure):
+            self.assertTrue(isinstance(failure, Failure))
             self.assertTrue(
                 isinstance(failure.value, zookeeper.ZooKeeperException))
 
-        d.addCallback(create_node)
         d.addCallback(get_acl)
-        d.addErrback(verify_failure)
+        d.addBoth(verify_failure)
         return d
 
     def test_client_id(self):
@@ -1031,42 +998,6 @@ class ClientTests(ZookeeperTestCase):
         d.addCallback(create_node)
         d.addCallback(client_sync)
         d.addCallback(verify_sync)
-        return d
-
-    def test_sync_error(self):
-        """
-        On error the sync callback returns a an exception/failure.
-        """
-        d = self.client.connect()
-
-        def inject_error(result_code, d):
-            error = zookeeper.ZooKeeperException("foobar")
-            d.errback(error)
-            return error
-
-        def create_node(client):
-            return client.create("/abc")
-
-        def client_sync(path):
-            mock_client = self.mocker.patch(self.client)
-            mock_client._check_result(ANY, DEFERRED_MATCH)
-            self.mocker.result(None)
-            mock_client._check_result(ANY, DEFERRED_MATCH)
-            self.mocker.call(inject_error)
-            self.mocker.replay()
-            return self.client.sync(path)
-
-        def verify_failure(failure):
-            self.assertTrue(
-                isinstance(failure.value, zookeeper.ZooKeeperException))
-
-        def assert_failed(extra):
-            self.fail("Should have gone to errback")
-
-        d.addCallback(create_node)
-        d.addCallback(client_sync)
-        d.addCallback(assert_failed)
-        d.addErrback(verify_failure)
         return d
 
     def test_property_servers(self):
