@@ -147,11 +147,21 @@ class ZookeeperClient(object):
         self.connected = False
         self.handle = None
 
-    def _check_connected(self):
+    def _check_connected(self, d):
         if not self.connected:
-            raise NotConnectedException("not connected")
+            d.errback(NotConnectedException("not connected"))
+            return d
 
     def _check_result(self, result_code, deferred, extra_codes=()):
+        """Check an API call or result for errors.
+
+        :param result_code: The api result code.
+        :param deferred: The deferred returned the client api consumer.
+        :param extra_codes: Additional result codes accepted as valid/ok.
+
+        If the result code is an error, an appropriate Exception class
+        is constructed and the errback on the deferred is invoked with it.
+        """
         error = None
         if not result_code == zookeeper.OK and not result_code in extra_codes:
             error_msg = zookeeper.zerror(result_code)
@@ -178,8 +188,9 @@ class ZookeeperClient(object):
         return None
 
     def _get(self, path, watcher):
-        self._check_connected()
         d = defer.Deferred()
+        if self._check_connected(d):
+            return d
 
         def _cb_get(result_code, value, stat):
             if self._check_result(result_code, d):
@@ -193,8 +204,9 @@ class ZookeeperClient(object):
         return d
 
     def _get_children(self, path, watcher):
-        self._check_connected()
         d = defer.Deferred()
+        if self._check_connected(d):
+            return d
 
         def _cb_get_children(result_code, children):
             if self._check_result(result_code, d):
@@ -208,8 +220,9 @@ class ZookeeperClient(object):
         return d
 
     def _exists(self, path, watcher):
-        self._check_connected()
         d = defer.Deferred()
+        if self._check_connected(d):
+            return d
 
         def _cb_exists(result_code, stat):
             if self._check_result(
@@ -312,14 +325,14 @@ class ZookeeperClient(object):
 
         @param scheme: a string specifying a an authentication scheme
                        valid values include 'digest'.
-        @param identity: a string containingusername and password colon
-                      separated for example 'mary:apples'
+        @param identity: a string containing username and password colon
+                      separated, for example 'mary:apples'
         """
-        self._check_connected()
         d = defer.Deferred()
+        if self._check_connected(d):
+            return d
 
         def _cb_authenticated(result_code):
-
             if self._check_result(result_code, d):
                 return
             d.callback(self)
@@ -436,8 +449,9 @@ class ZookeeperClient(object):
         @params acls: A list of dictionaries specifying permissions.
         @params flags: Node creation flags (ephemeral, sequence, persistent)
         """
-        self._check_connected()
         d = defer.Deferred()
+        if self._check_connected(d):
+            return d
 
         def _cb_created(result_code, path):
             if self._check_result(result_code, d):
@@ -460,8 +474,9 @@ class ZookeeperClient(object):
         @param path: the path of the node to be deleted.
         @param version: the integer version of the node.
         """
-        self._check_connected()
         d = defer.Deferred()
+        if self._check_connected(d):
+            return d
 
         def _cb_delete(result_code):
             if self._check_result(result_code, d):
@@ -557,8 +572,9 @@ class ZookeeperClient(object):
 
         @param path: The path of the node whose acl will be retrieved.
         """
-        self._check_connected()
         d = defer.Deferred()
+        if self._check_connected(d):
+            return d
 
         def _cb_get_acl(result_code, acls, stat):
             if self._check_result(result_code, d):
@@ -593,8 +609,9 @@ class ZookeeperClient(object):
                         doesn't match the version on the server, then a
                         BadVersionException is raised.
         """
-        self._check_connected()
         d = defer.Deferred()
+        if self._check_connected(d):
+            return d
 
         def _cb_set_acl(result_code):
             if self._check_result(result_code, d):
@@ -618,8 +635,9 @@ class ZookeeperClient(object):
         @param data: The data to store on the node.
         @param version: Integer version value
         """
-        self._check_connected()
         d = defer.Deferred()
+        if self._check_connected(d):
+            return d
 
         def _cb_set(result_code, node_stat):
             if self._check_result(result_code, d):
@@ -691,8 +709,9 @@ class ZookeeperClient(object):
 
         @param path: The root path to flush, all child nodes are also flushed.
         """
-        self._check_connected()
         d = defer.Deferred()
+        if self._check_connected(d):
+            return d
 
         def _cb_sync(result_code, path):
             if self._check_result(result_code, d):

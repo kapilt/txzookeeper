@@ -1183,14 +1183,14 @@ class ClientTests(ZookeeperTestCase):
         All of the client apis (with the exception of connect) attempt
         to ensure the client is connected before executing an operation.
         """
-        self.assertRaises(
-            zookeeper.ZooKeeperException, self.client.get_children, "/abc")
+        self.assertFailure(
+            self.client.get_children("/abc"), zookeeper.ZooKeeperException)
 
-        self.assertRaises(
-            zookeeper.ZooKeeperException, self.client.create, "/abc")
+        self.assertFailure(
+            self.client.create("/abc"), zookeeper.ZooKeeperException)
 
-        self.assertRaises(
-            zookeeper.ZooKeeperException, self.client.set, "/abc", "123")
+        self.assertFailure(
+            self.client.set("/abc", "123"), zookeeper.ZooKeeperException)
 
     def test_connect_multiple_raises(self):
         """
