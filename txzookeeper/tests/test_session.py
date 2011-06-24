@@ -183,7 +183,7 @@ class ClientSessionTests(ZookeeperTestCase):
         # The connection is dead without reconnecting.
         yield self.assertFailure(self.client.exists("/"),
                                  NotConnectedException)
-        self.assertTrue(self.client.unrecoverable())
+        self.assertTrue(self.client.unrecoverable)
 
         # If a reconnect attempt is made with a dead session id
         #yield self.client.connect(client_id=self.client.client_id)
