@@ -81,7 +81,7 @@ class ClientSessionTests(ZookeeperTestCase):
         """
         session_events = []
 
-        def session_event_callback(e):
+        def session_event_callback(connection, e):
             session_events.append(e)
 
         # Connect to the Zookeeper Cluster
@@ -155,7 +155,7 @@ class ClientSessionTests(ZookeeperTestCase):
         session_events = []
         events_received = Deferred()
 
-        def session_event_callback(e):
+        def session_event_callback(connection, e):
             session_events.append(e)
             if len(session_events) == 4:
                 events_received.callback(True)
@@ -195,8 +195,8 @@ class ClientSessionTests(ZookeeperTestCase):
     @inlineCallbacks
     def test_client_reconnect_session_on_different_server(self):
         """On connection failure, An application can choose to use a
-        new connection with to reconnect to a different member of the
-        zookeeper cluster, reacquiring the extant session.
+        new connection with which to reconnect to a different member
+        of the zookeeper cluster, reacquiring the extant session.
 
         A large obvious caveat to using a new client instance rather
         than reconnecting the existing client, is that even though the
@@ -206,7 +206,7 @@ class ClientSessionTests(ZookeeperTestCase):
         """
         session_events = []
 
-        def session_event_callback(e):
+        def session_event_callback(connection, e):
             session_events.append(e)
 
         # Connect to a node in the cluster and establish a watch

@@ -148,7 +148,7 @@ class ZookeeperClient(object):
         """
         @param servers: A string specifying the servers and their
                         ports to connect to. Multiple servers can be
-                        specified in comma separated fashion, if they are,
+                        specified in comma separated fashion. if they are,
                         then the client will automatically rotate
                         among them if a server connection fails. Optionally
                         a chroot can be specified. A full server spec looks
@@ -266,14 +266,14 @@ class ZookeeperClient(object):
     def _session_event_wrapper(self, watcher, event_type, conn_state, path):
         """Watch wrapper that diverts session events to a connection callback.
         """
-        # If its a session event pass it to the session callback, else
+        # If it's a session event pass it to the session callback, else
         # ignore it. Session events are sent repeatedly to watchers
         # which we have modeled after deferred, which only accept a
         # single return value.
         if event_type == zookeeper.SESSION_EVENT:
             if self._session_event_callback:
                 self._session_event_callback(
-                    ClientEvent(event_type, conn_state, path))
+                    self, ClientEvent(event_type, conn_state, path))
         else:
             return watcher(event_type, conn_state, path)
 
@@ -320,7 +320,7 @@ class ZookeeperClient(object):
         A client id is a tuple represented by the session id and
         session password. It can be used to manually connect to an
         extant server session (which contains associated ephemeral
-        nodes and watches)/ The connection's client id, is also useful
+        nodes and watches)/ The connection's client id is also useful
         when introspecting the server logs for specific client
         activity.
         """
@@ -374,9 +374,10 @@ class ZookeeperClient(object):
         result = zookeeper.close(self.handle)
         self.connected = False
         d = defer.Deferred()
-        self._check_result(result, d)
-        if not d.called:
-            d.callback(True)
+
+        if self._check_result(result, d):
+            return d
+        d.callback(True)
         return d
 
     def connect(self, servers=None, timeout=10, client_id=None):
@@ -429,7 +430,7 @@ class ZookeeperClient(object):
         self, scheduled_timeout, connect_deferred, type, state, path):
         """This callback is invoked through the lifecycle of the connection.
 
-        Its used for all connection level events and session events.
+        It's used for all connection level events and session events.
         """
         # Cancel the timeout delayed task if it hasn't fired.
         if scheduled_timeout.active():
@@ -446,10 +447,11 @@ class ZookeeperClient(object):
             if state == zookeeper.CONNECTED_STATE and scheduled_timeout.called:
                 self.close()
 
-            # Send session events to the callback, this in addition to any
+            # Send session events to the callback, in addition to any
             # duplicate session events that will be sent for extant watches.
             if self._session_event_callback:
-                self._session_event_callback(ClientEvent(type, state, path))
+                self._session_event_callback(
+                    self, ClientEvent(type, state, path))
 
             return
         elif state == zookeeper.CONNECTED_STATE:
@@ -681,16 +683,16 @@ class ZookeeperClient(object):
         zookeeper.set_watcher(self.handle, watcher)
 
     def set_session_callback(self, callback):
-        """Set a callback to recieve session events.
+        """Set a callback to receive session events.
 
         Session events are by default ignored. Interested applications
         may choose to set a session event watcher on the connection
         to receive session events. Session events are typically broadcast
         by the libzookeeper library to all extant watchers, but the
-        twisted integration using deferreds is not capable of recieving
+        twisted integration using deferreds is not capable of receiving
         multiple values (session events and watch events), so this
         client implementation instead provides for a user defined callback
-        to be invoked with them instead. The callback recieves a single
+        to be invoked with them instead. The callback receives a single
         parameter, the session event in the form of a ClientEvent instance.
 
         Additional details on session events
@@ -698,20 +700,23 @@ class ZookeeperClient(object):
         http://bit.ly/mQrOMY
         http://bit.ly/irKpfn
         """
-        assert callable(callback)
+        if not callable(callback):
+            raise TypeError("Invalid callback %r" % callback)
         self._session_event_callback = callback
 
     def set_connection_error_callback(self, callback):
         """Set a callback to receive connection error exceptions.
 
         By default the error will be raised when the client API
-        call is made, by setting a connection level error handler,
-        applications can centralize their handling of connection loss,
+        call is made. Setting a connection level error handler allows
+        applications to centralize their handling of connection loss,
         instead of having to guard every zk interaction.
 
         The callback receives two parameters, the client instance
         and the exception.
         """
+        if not callable(callback):
+            raise TypeError("Invalid callback %r" % callback)
         self._connection_error_callback = callback
 
     def set_determinstic_order(self, boolean):
@@ -719,7 +724,7 @@ class ZookeeperClient(object):
         The zookeeper client will by default randomize the server hosts
         it will connect to unless this is set to True.
 
-        This is a global setting, across connections.
+        This is a global setting across connections.
         """
         zookeeper.deterministic_conn_order(bool(boolean))
 

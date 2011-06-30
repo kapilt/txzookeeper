@@ -1111,7 +1111,7 @@ class ClientTests(ZookeeperTestCase):
             self.assertEqual(self.client.client_id, client.client_id)
             self.assertEqual(client.state, zookeeper.CONNECTED_STATE)
 
-            # Closing one connection, will close the session
+            # Closing one connection will close the session
             client.close()
 
             # Continued use of the other client will get a
@@ -1250,10 +1250,10 @@ class ClientTests(ZookeeperTestCase):
 
     def test_connection_watcher(self):
         """
-        A connection watcher can be set that recieves notices on when the
-        connection state changes. Technically zookeeper would also use this as
-        a global watcher for node state changes, but zkpython doesn't expose
-        that api, as its mostly considered legacy.
+        A connection watcher can be set that receives notices on when
+        the connection state changes. Technically zookeeper would also
+        use this as a global watcher for node watches, but zkpython
+        doesn't expose that api, as its mostly considered legacy.
 
         its out of scope to simulate a connection level event within unit tests
         such as the server restarting.
@@ -1286,3 +1286,13 @@ class ClientTests(ZookeeperTestCase):
         If the client is not connected, closing returns None.
         """
         self.assertEqual(self.client.close(), None)
+
+    def test_invalid_connection_error_callback(self):
+        self.assertRaises(TypeError,
+                          self.client.set_connection_error_callback,
+                          None)
+
+    def test_invalid_session_callback(self):
+        self.assertRaises(TypeError,
+                          self.client.set_session_callback,
+                          None)
