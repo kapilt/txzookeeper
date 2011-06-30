@@ -8,7 +8,7 @@ from twisted.internet import reactor
 from twisted.internet.defer import inlineCallbacks, Deferred, returnValue
 
 from txzookeeper import ZookeeperClient
-from txzookeeper.client import NotConnectedException
+from txzookeeper.client import NotConnectedException, ConnectionException
 
 from txzookeeper.tests.common import ZookeeperCluster
 from txzookeeper.tests import ZookeeperTestCase
@@ -181,8 +181,10 @@ class ClientSessionTests(ZookeeperTestCase):
         self.assertEqual(session_events[-1].state_name, "expired")
 
         # The connection is dead without reconnecting.
-        yield self.assertFailure(self.client.exists("/"),
-                                 NotConnectedException)
+        yield self.assertFailure(
+            self.client.exists("/"),
+            NotConnectedException, ConnectionException)
+
         self.assertTrue(self.client.unrecoverable)
 
         # If a reconnect attempt is made with a dead session id

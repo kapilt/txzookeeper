@@ -31,7 +31,7 @@ from mocker import ANY, MATCH
 from txzookeeper.tests import ZookeeperTestCase, utils
 from txzookeeper.client import (
     ZookeeperClient, ZOO_OPEN_ACL_UNSAFE, ConnectionTimeoutException,
-    ConnectionException, ClientEvent)
+    ConnectionException, NotConnectedException, ClientEvent)
 
 PUBLIC_ACL = ZOO_OPEN_ACL_UNSAFE
 
@@ -131,6 +131,10 @@ class ClientTests(ZookeeperTestCase):
         self.assertEqual(event.connection_state, 'state')
         self.assertEqual(event.path, 'path')
         self.assertEqual(event, (4, 'state', 'path'))
+
+    def test_client_use_while_disconnected_returns_failure(self):
+        return self.assertFailure(
+            self.client.exists("/"), NotConnectedException)
 
     def test_create_ephemeral_node_and_close_connection(self):
         """
