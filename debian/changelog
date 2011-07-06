@@ -2,7 +2,7 @@ txzookeeper (0.8.0-0ubuntu1) natty; urgency=low
 
   * Much improved session event and connection error handling (and cluster tests)
 
- -- Kapil Thangavelu <kapil.thangavelu@canonical.com> Tue, 5 Jul 2011 22:07 -0500
+ -- Kapil Thangavelu <kapil.thangavelu@canonical.com>  Tue, 5 Jul 2011 22:07 -0500
 
 txzookeeper (0.2.1-0ubuntu2) natty; urgency=low
 
@@ -13,7 +13,7 @@ txzookeeper (0.2.1-0ubuntu2) natty; urgency=low
 txzookeeper (0.2.1-0ubuntu1) maverick; urgency=low
 
   * New utility function for retrying changes on a node
- 
+
   * Fix for connect/close/connect cycling on a connection.
 
  -- Kapil Thangavelu (Work Key) <kapil.thangavelu@canonical.com>  Wed, 12 January 2011 14:03:06 -0500
