@@ -175,7 +175,7 @@ class QueueTests(ZookeeperTestCase):
         watch = Deferred()
         self.mocker.result((succeed(["entry-000000"]), watch))
 
-        item_path = "%s/%s"%(path, "entry-000000")
+        item_path = "%s/%s" % (path, "entry-000000")
         mock_client.get(item_path)
         self.mocker.result(fail(SyntaxError("x")))
         self.mocker.replay()
@@ -230,13 +230,13 @@ class QueueTests(ZookeeperTestCase):
             producer_done = Deferred()
 
             def iteration(i):
-                if len(items) == (item_count-1):
+                if len(items) == (item_count - 1):
                     return producer_done.callback(None)
                 items.append(i)
                 queue.put(str(i))
 
             for i in range(item_count):
-                reactor.callLater(i*0.05, iteration, i)
+                reactor.callLater(i * 0.05, iteration, i)
             yield producer_done
             returnValue(items)
 
@@ -284,7 +284,7 @@ class QueueTests(ZookeeperTestCase):
         def producer(start, offset):
             client = yield self.open_client()
             q = self.queue_factory(path, client)
-            for i in range(start, start+offset):
+            for i in range(start, start + offset):
                 yield q.put(str(i))
                 produce_results.append(str(i))
 
@@ -311,7 +311,7 @@ class QueueTests(ZookeeperTestCase):
         yield DeferredList(
             [consumer(8), consumer(8), consumer(4)])
 
-        err = set(produce_results)-set(consume_results)
+        err = set(produce_results) - set(consume_results)
         self.assertFalse(err)
 
         self.assertEqual(len(consume_results), len(produce_results))

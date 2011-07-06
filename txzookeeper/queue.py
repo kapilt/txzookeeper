@@ -90,7 +90,7 @@ class Queue(object):
         def on_queue_items_changed(*args):
             """Event watcher on queue node child events."""
             if request.complete or not self._client.connected:
-                return # pragma: no cover
+                return  # pragma: no cover
 
             if request.processing_children:
                 # If deferred stack is currently processing a set of children
@@ -273,7 +273,7 @@ class ReliableQueue(Queue):
     """
 
     def _item_processed_callback(self, result_code, item_path):
-        return self._client.delete(item_path+"-processing")
+        return self._client.delete(item_path + "-processing")
 
     def _filter_children(self, children, suffix="-processing"):
         """
@@ -300,7 +300,7 @@ class ReliableQueue(Queue):
 
         def on_node_exists(stat, path):
             """Reserve the node for consumer processing."""
-            d = self._client.create(path+"-processing",
+            d = self._client.create(path + "-processing",
                                     flags=zookeeper.EPHEMERAL)
             d.addCallback(on_reservation_success, path)
             d.addErrback(on_reservation_failed)
@@ -315,7 +315,7 @@ class ReliableQueue(Queue):
 
         def on_get_node_failed(failure, path):
             """If we can't fetch the node, delete the processing node."""
-            d = self._client.delete(path+"-processing")
+            d = self._client.delete(path + "-processing")
 
             # propogate unexpected errors appropriately
             if not failure.check(zookeeper.NoNodeException):
@@ -372,7 +372,7 @@ class SerializedQueue(Queue):
 
     def __init__(self, path, client, acl=None, persistent=False):
         super(SerializedQueue, self).__init__(path, client, acl, persistent)
-        self._lock = Lock("%s/%s"%(self.path, "_lock"), client)
+        self._lock = Lock("%s/%s" % (self.path, "_lock"), client)
 
     def _item_processed_callback(self, result_code, item_path):
         return self._lock.release()

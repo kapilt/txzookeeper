@@ -59,7 +59,7 @@ class NodeTest(TestCase):
     def _make_digest_identity(self, credentials):
         user, password = credentials.split(":")
         digest = hashlib.new("sha1", credentials).digest()
-        return "%s:%s"%(user, base64.b64encode(digest))
+        return "%s:%s" % (user, base64.b64encode(digest))
 
     def test_node_name_and_path(self):
         """

@@ -23,17 +23,23 @@ import hashlib
 
 from twisted.internet.defer import Deferred
 from twisted.internet.base import DelayedCall
+from twisted.python.failure import Failure
 
 import zookeeper
 
+from mocker import ANY, MATCH
+from txzookeeper.tests import ZookeeperTestCase, utils
 from txzookeeper.client import (
     ZookeeperClient, ZOO_OPEN_ACL_UNSAFE, ConnectionTimeoutException,
-    ConnectionException, ClientEvent)
-
-from mocker import ANY
-from txzookeeper.tests import ZookeeperTestCase, utils
+    ConnectionException, NotConnectedException, ClientEvent)
 
 PUBLIC_ACL = ZOO_OPEN_ACL_UNSAFE
+
+
+def match_deferred(arg):
+    return isinstance(arg, Deferred)
+
+DEFERRED_MATCH = MATCH(match_deferred)
 
 
 class ClientTests(ZookeeperTestCase):
@@ -47,9 +53,10 @@ class ClientTests(ZookeeperTestCase):
         if self.client.connected:
             utils.deleteTree(handle=self.client.handle)
             self.client.close()
-        del self.client
+
         if self.client2 and self.client2.connected:
             self.client2.close()
+
         super(ClientTests, self).tearDown()
 
     def test_wb_connect_after_timeout(self):
@@ -113,8 +120,10 @@ class ClientTests(ZookeeperTestCase):
         return d
 
     def test_client_event_repr(self):
-        event = ClientEvent(4, 'state', 'path')
-        self.assertEqual(repr(event), "<ClientEvent child at 'path'>")
+        event = ClientEvent(zookeeper.SESSION_EVENT,
+                            zookeeper.EXPIRED_SESSION_STATE, '')
+        self.assertEqual(repr(event),
+                         "<ClientEvent session at '' state: expired>")
 
     def test_client_event_attributes(self):
         event = ClientEvent(4, 'state', 'path')
@@ -122,6 +131,10 @@ class ClientTests(ZookeeperTestCase):
         self.assertEqual(event.connection_state, 'state')
         self.assertEqual(event.path, 'path')
         self.assertEqual(event, (4, 'state', 'path'))
+
+    def test_client_use_while_disconnected_returns_failure(self):
+        return self.assertFailure(
+            self.client.exists("/"), NotConnectedException)
 
     def test_create_ephemeral_node_and_close_connection(self):
         """
@@ -307,14 +320,17 @@ class ClientTests(ZookeeperTestCase):
             return self.client.create("/foobar-watched", "rabbit")
 
         def get_node(path):
-            return self.client.get_and_watch(path)
+            data, watch = self.client.get_and_watch(path)
+            return data.addCallback(lambda x: (watch,))
 
-        def new_connection((data, watch)):
+        def new_connection((watch,)):
             self.client2 = ZookeeperClient("127.0.0.1:2181")
-            return self.client2.connect(), watch
+            return self.client2.connect().addCallback(
+                lambda x, y=None, z=None: (x, watch))
 
         def trigger_watch((client, watch)):
             zookeeper.delete(self.client2.handle, "/foobar-watched")
+            self.client2.close()
             return watch
 
         def verify_watch(event):
@@ -385,11 +401,16 @@ class ClientTests(ZookeeperTestCase):
         """
         d = self.client.connect()
 
+        def inject_error(result_code, d, extra_codes=None):
+            error = SyntaxError()
+            d.errback(error)
+            return error
+
         def check_exists(client):
             mock_client = self.mocker.patch(client)
             mock_client._check_result(
-                ANY, True, extra_codes=(zookeeper.NONODE,))
-            self.mocker.result(SyntaxError())
+                ANY, DEFERRED_MATCH, extra_codes=(zookeeper.NONODE,))
+            self.mocker.call(inject_error)
             self.mocker.replay()
             return client.exists("/zebra-moon")
 
@@ -655,20 +676,21 @@ class ClientTests(ZookeeperTestCase):
         return d
 
     def test_get_children_with_error(self):
+        """If the result of an api call is an error, its propgated.
+        """
         d = self.client.connect()
 
         def get_children(client):
-            mock_client = self.mocker.patch(self.client)
-            mock_client._check_result(ANY, True)
-            self.mocker.result(SyntaxError())
-            self.mocker.replay()
+            # Get the children of a nonexistant node
             return client.get_children("/tower")
 
         def verify_failure(failure):
-            self.assertTrue(isinstance(failure.value, SyntaxError))
+            self.assertTrue(isinstance(failure, Failure))
+            self.assertTrue(
+                isinstance(failure.value, zookeeper.NoNodeException))
 
         d.addCallback(get_children)
-        d.addErrback(verify_failure)
+        d.addBoth(verify_failure)
         return d
 
     # seems to be a segfault on this one, must be running latest zk
@@ -825,7 +847,7 @@ class ClientTests(ZookeeperTestCase):
         def verify_node_access(stat):
             self.assertEqual(stat['version'], 1)
             self.assertEqual(stat['dataLength'], 3)
-            self.assertTrue(failed) # we should have hit the errback
+            self.assertTrue(failed)  # we should have hit the errback
 
         d.addCallback(add_auth_one)
         d.addCallback(create_node)
@@ -905,10 +927,6 @@ class ClientTests(ZookeeperTestCase):
         acl = dict(scheme="digest", id="a:b", perms=zookeeper.PERM_ALL)
 
         def set_acl(client):
-            mock_client = self.mocker.patch(client)
-            mock_client._check_result(ANY, True)
-            self.mocker.result(zookeeper.NoNodeException())
-            self.mocker.replay()
             return client.set_acl("/zebra-moon22", [acl])
 
         def verify_failure(failure):
@@ -946,23 +964,22 @@ class ClientTests(ZookeeperTestCase):
         """
         d = self.client.connect()
 
-        def create_node(client):
-            return client.create("/moose")
+        def inject_error(result, d):
+            error = zookeeper.ZooKeeperException()
+            d.errback(error)
+            return error
 
         def get_acl(path):
-            mock_client = self.mocker.patch(self.client)
-            mock_client._check_result(ANY, True)
-            self.mocker.result(zookeeper.ZooKeeperException("foobar"))
-            self.mocker.replay()
-            return self.client.get_acl(path)
+            # Get the ACL of a nonexistant node
+            return self.client.get_acl("/moose")
 
         def verify_failure(failure):
+            self.assertTrue(isinstance(failure, Failure))
             self.assertTrue(
                 isinstance(failure.value, zookeeper.ZooKeeperException))
 
-        d.addCallback(create_node)
         d.addCallback(get_acl)
-        d.addErrback(verify_failure)
+        d.addBoth(verify_failure)
         return d
 
     def test_client_id(self):
@@ -1004,35 +1021,6 @@ class ClientTests(ZookeeperTestCase):
         d.addCallback(create_node)
         d.addCallback(client_sync)
         d.addCallback(verify_sync)
-        return d
-
-    def test_sync_error(self):
-        """
-        On error the sync callback returns a an exception/failure.
-        """
-        d = self.client.connect()
-
-        def create_node(client):
-            return client.create("/abc")
-
-        def client_sync(path):
-            mock_client = self.mocker.patch(self.client)
-            mock_client._check_result(ANY, True)
-            self.mocker.result(zookeeper.ZooKeeperException("foobar"))
-            self.mocker.replay()
-            return self.client.sync(path)
-
-        def verify_failure(failure):
-            self.assertTrue(
-                isinstance(failure.value, zookeeper.ZooKeeperException))
-
-        def assert_failed(extra):
-            self.fail("Should have gone to errback")
-
-        d.addCallback(create_node)
-        d.addCallback(client_sync)
-        d.addCallback(assert_failed)
-        d.addErrback(verify_failure)
         return d
 
     def test_property_servers(self):
@@ -1087,11 +1075,65 @@ class ClientTests(ZookeeperTestCase):
             return client.set_connection_watcher(1)
 
         def verify_invalid(failure):
-            self.assertEqual(failure.value.args, ("invalid watcher",))
+            self.assertEqual(failure.value.args, ("Invalid Watcher 1",))
             self.assertTrue(isinstance(failure.value, SyntaxError))
 
         d.addCallback(set_invalid_watcher)
         d.addErrback(verify_invalid)
+        return d
+
+    def xtest_session_expired_event(self):
+        """
+        A client session can be reattached to in a separate connection,
+        if the a session is expired, using the zookeeper connection will
+        raise a SessionExpiredException.
+        """
+        d = self.client.connect()
+
+        class StopTest(Exception):
+            pass
+
+        def new_connection_same_connection(client):
+            self.assertEqual(client.state, zookeeper.CONNECTED_STATE)
+            return ZookeeperClient("127.0.0.1:2181").connect(
+                client_id=client.client_id).addErrback(
+                guard_session_expired, client)
+
+        def guard_session_expired(failure, client):
+            # On occassion we get a session expired event while connecting.
+            failure.trap(ConnectionException)
+            self.assertEqual(failure.value.state_name, "expired")
+            # Stop the test from proceeding
+            raise StopTest()
+
+        def close_new_connection(client):
+            # Verify both connections are using same session
+            self.assertEqual(self.client.client_id, client.client_id)
+            self.assertEqual(client.state, zookeeper.CONNECTED_STATE)
+
+            # Closing one connection will close the session
+            client.close()
+
+            # Continued use of the other client will get a
+            # disconnect exception.
+            return self.client.exists("/")
+
+        def verify_original_closed(failure):
+            if not isinstance(failure, Failure):
+                self.fail("Test did not raise exception.")
+            failure.trap(
+                zookeeper.SessionExpiredException,
+                zookeeper.ConnectionLossException)
+
+            #print "client close"
+            self.client.close()
+            #print "creating new client for teardown"
+            return self.client.connect()
+
+        d.addCallback(new_connection_same_connection)
+        d.addCallback(close_new_connection)
+        d.addBoth(verify_original_closed)
+
         return d
 
     def test_connect_with_server(self):
@@ -1164,14 +1206,14 @@ class ClientTests(ZookeeperTestCase):
         All of the client apis (with the exception of connect) attempt
         to ensure the client is connected before executing an operation.
         """
-        self.assertRaises(
-            zookeeper.ZooKeeperException, self.client.get_children, "/abc")
+        self.assertFailure(
+            self.client.get_children("/abc"), zookeeper.ZooKeeperException)
 
-        self.assertRaises(
-            zookeeper.ZooKeeperException, self.client.create, "/abc")
+        self.assertFailure(
+            self.client.create("/abc"), zookeeper.ZooKeeperException)
 
-        self.assertRaises(
-            zookeeper.ZooKeeperException, self.client.set, "/abc", "123")
+        self.assertFailure(
+            self.client.set("/abc", "123"), zookeeper.ZooKeeperException)
 
     def test_connect_multiple_raises(self):
         """
@@ -1181,8 +1223,9 @@ class ClientTests(ZookeeperTestCase):
         d = self.client.connect()
 
         def connect_again(client):
-            self.assertRaises(
-                zookeeper.ZooKeeperException, client.connect)
+            d = client.connect()
+            self.failUnlessFailure(d, zookeeper.ZooKeeperException)
+            return d
 
         d.addCallback(connect_again)
         return d
@@ -1199,18 +1242,18 @@ class ClientTests(ZookeeperTestCase):
         d = self.client.connect()
 
         def verify_failure(client):
-            self.assertRaises(
-                zookeeper.ZooKeeperException, client.create, "/abc")
+            d = client.create("/abc")
+            self.failUnlessFailure(d, zookeeper.ZooKeeperException)
 
         d.addCallback(verify_failure)
         return d
 
     def test_connection_watcher(self):
         """
-        A connection watcher can be set that recieves notices on when the
-        connection state changes. Technically zookeeper would also use this as
-        a global watcher for node state changes, but zkpython doesn't expose
-        that api, as its mostly considered legacy.
+        A connection watcher can be set that receives notices on when
+        the connection state changes. Technically zookeeper would also
+        use this as a global watcher for node watches, but zkpython
+        doesn't expose that api, as its mostly considered legacy.
 
         its out of scope to simulate a connection level event within unit tests
         such as the server restarting.
@@ -1243,3 +1286,13 @@ class ClientTests(ZookeeperTestCase):
         If the client is not connected, closing returns None.
         """
         self.assertEqual(self.client.close(), None)
+
+    def test_invalid_connection_error_callback(self):
+        self.assertRaises(TypeError,
+                          self.client.set_connection_error_callback,
+                          None)
+
+    def test_invalid_session_callback(self):
+        self.assertRaises(TypeError,
+                          self.client.set_session_callback,
+                          None)

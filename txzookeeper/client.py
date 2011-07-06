@@ -60,6 +60,24 @@ ERROR_MAPPING = {
     zookeeper.SYSTEMERROR: zookeeper.SystemErrorException,
     zookeeper.UNIMPLEMENTED: zookeeper.UnimplementedException}
 
+# Mapping of connection state values to human strings.
+STATE_NAME_MAPPING = {
+    zookeeper.ASSOCIATING_STATE: "associating",
+    zookeeper.AUTH_FAILED_STATE: "auth-failed",
+    zookeeper.CONNECTED_STATE: "connected",
+    zookeeper.CONNECTING_STATE: "connecting",
+    zookeeper.EXPIRED_SESSION_STATE: "expired",
+}
+
+# Mapping of event type to human string.
+TYPE_NAME_MAPPING = {
+    zookeeper.NOTWATCHING_EVENT: "not-watching",
+    zookeeper.SESSION_EVENT: "session",
+    zookeeper.CREATED_EVENT: "created",
+    zookeeper.DELETED_EVENT: "deleted",
+    zookeeper.CHANGED_EVENT: "changed",
+    zookeeper.CHILD_EVENT: "child"}
+
 
 class NotConnectedException(zookeeper.ZooKeeperException):
     """
@@ -72,6 +90,29 @@ class ConnectionException(zookeeper.ZooKeeperException):
     """
     Raised if an error occurs during the client's connection attempt.
     """
+
+    @property
+    def state_name(self):
+        return STATE_NAME_MAPPING[self.args[2]]
+
+    @property
+    def type_name(self):
+        return TYPE_NAME_MAPPING[self.args[1]]
+
+    def __str__(self):
+        return "<txzookeeper.ConnectionException type: %s state: %s>" % (
+            self.type_name, self.state_name)
+
+
+def is_connection_exception(e):
+    """
+    For connection errors in response to api calls, a utility method
+    to determine if the cause is a connection exception.
+    """
+    return isinstance(e,
+                      (zookeeper.ClosingException,
+                       zookeeper.ConnectionLossException,
+                       zookeeper.SessionExpiredException))
 
 
 class ConnectionTimeoutException(zookeeper.ZooKeeperException):
@@ -87,94 +128,131 @@ class ClientEvent(namedtuple("ClientEvent", 'type, connection_state, path')):
     some event on the zookeeper client that the watch was requested on.
     """
 
-    type_name_map = {
-        -2: "notwatching",
-        -1: "session",
-        1: 'created',
-        2: 'deleted',
-        3: 'changed',
-        4: 'child'}
-
     @property
     def type_name(self):
-        return self.type_name_map[self.type]
+        return TYPE_NAME_MAPPING[self.type]
+
+    @property
+    def state_name(self):
+        return STATE_NAME_MAPPING[self.connection_state]
 
     def __repr__(self):
-        return  "<ClientEvent %s at %r>" % (self.type_name, self.path)
+        return  "<ClientEvent %s at %r state: %s>" % (
+            self.type_name, self.path, self.state_name)
 
 
 class ZookeeperClient(object):
     """Asynchronous twisted client for zookeeper."""
 
     def __init__(self, servers=None, session_timeout=None):
+        """
+        @param servers: A string specifying the servers and their
+                        ports to connect to. Multiple servers can be
+                        specified in comma separated fashion. if they are,
+                        then the client will automatically rotate
+                        among them if a server connection fails. Optionally
+                        a chroot can be specified. A full server spec looks
+                        like host:port/chroot_path
+
+        @param session_timeout: The client's zookeeper session timeout can be
+                       hinted. The actual value is negotiated between the
+                       client and server based on their respective
+                       configurations.
+        """
         self._servers = servers
         self._session_timeout = session_timeout
+        self._session_event_callback = None
+        self._connection_error_callback = None
         self.connected = False
         self.handle = None
 
-    def _check_connected(self):
+    def _check_connected(self, d):
         if not self.connected:
-            raise NotConnectedException("not connected")
+            d.errback(NotConnectedException("not connected"))
+            return d
 
-    def _check_result(self, result_code, callback=False, extra_codes=()):
+    def _check_result(self, result_code, deferred, extra_codes=()):
+        """Check an API call or result for errors.
+
+        :param result_code: The api result code.
+        :param deferred: The deferred returned the client api consumer.
+        :param extra_codes: Additional result codes accepted as valid/ok.
+
+        If the result code is an error, an appropriate Exception class
+        is constructed and the errback on the deferred is invoked with it.
+        """
         error = None
         if not result_code == zookeeper.OK and not result_code in extra_codes:
             error_msg = zookeeper.zerror(result_code)
             error_class = ERROR_MAPPING.get(
                 result_code, zookeeper.ZooKeeperException)
             error = error_class(error_msg)
-            if callback:
-                return error
-            raise error
+
+            if is_connection_exception(error):
+                # Mark the client as disconnected.
+                self.connected = False
+                # Route connection errors to a connection level error
+                # handler if specified.
+                if self._connection_error_callback:
+                    # The result of the connection error handler is returned
+                    # to the api.
+                    d = defer.maybeDeferred(
+                        self._connection_error_callback,
+                        self, error)
+                    d.chainDeferred(deferred)
+                    return True
+
+            deferred.errback(error)
+            return True
         return None
 
     def _get(self, path, watcher):
-        self._check_connected()
         d = defer.Deferred()
+        if self._check_connected(d):
+            return d
 
         def _cb_get(result_code, value, stat):
-            error = self._check_result(result_code, True)
-            if error:
-                return d.errback(error)
+            if self._check_result(result_code, d):
+                return
             d.callback((value, stat))
 
         callback = self._zk_thread_callback(_cb_get)
         watcher = self._wrap_watcher(watcher)
         result = zookeeper.aget(self.handle, path, watcher, callback)
-        self._check_result(result)
+        self._check_result(result, d)
         return d
 
     def _get_children(self, path, watcher):
-        self._check_connected()
         d = defer.Deferred()
+        if self._check_connected(d):
+            return d
 
         def _cb_get_children(result_code, children):
-            error = self._check_result(result_code, True)
-            if error:
-                return d.errback(error)
+            if self._check_result(result_code, d):
+                return
             d.callback(children)
 
         callback = self._zk_thread_callback(_cb_get_children)
         watcher = self._wrap_watcher(watcher)
         result = zookeeper.aget_children(self.handle, path, watcher, callback)
-        self._check_result(result)
+        self._check_result(result, d)
         return d
 
     def _exists(self, path, watcher):
-        self._check_connected()
         d = defer.Deferred()
+        if self._check_connected(d):
+            return d
 
         def _cb_exists(result_code, stat):
-            error = self._check_result(
-                result_code, True, extra_codes=(zookeeper.NONODE,))
-            if error:
-                return d.errback(error)
+            if self._check_result(
+                result_code, d, extra_codes=(zookeeper.NONODE,)):
+                return
             d.callback(stat)
 
         callback = self._zk_thread_callback(_cb_exists)
         watcher = self._wrap_watcher(watcher)
         result = zookeeper.aexists(self.handle, path, watcher, callback)
-        self._check_result(result)
+        self._check_result(result, d)
         return d
 
     def _wrap_watcher(self, watcher):
@@ -182,7 +260,22 @@ class ZookeeperClient(object):
             return watcher
         if not callable(watcher):
             raise SyntaxError("invalid watcher")
-        return self._zk_thread_callback(watcher)
+        return self._zk_thread_callback(
+            partial(self._session_event_wrapper, watcher))
+
+    def _session_event_wrapper(self, watcher, event_type, conn_state, path):
+        """Watch wrapper that diverts session events to a connection callback.
+        """
+        # If it's a session event pass it to the session callback, else
+        # ignore it. Session events are sent repeatedly to watchers
+        # which we have modeled after deferred, which only accept a
+        # single return value.
+        if event_type == zookeeper.SESSION_EVENT:
+            if self._session_event_callback:
+                self._session_event_callback(
+                    self, ClientEvent(event_type, conn_state, path))
+        else:
+            return watcher(event_type, conn_state, path)
 
     def _zk_thread_callback(self, func):
         """
@@ -190,7 +283,6 @@ class ZookeeperClient(object):
         any user defined callback so that they are called back in the main
         thread after, zookeeper calls the wrapper.
         """
-
         def wrapper(handle, *args):  # pragma: no cover
             reactor.callFromThread(func, *args)
         return wrapper
@@ -207,6 +299,7 @@ class ZookeeperClient(object):
     def session_timeout(self):
         """
         What's the negotiated session timeout for this connection, in seconds.
+        If the client is not connected the value is None.
         """
         if self.connected:
             return zookeeper.recv_timeout(self.handle)
@@ -222,9 +315,14 @@ class ZookeeperClient(object):
 
     @property
     def client_id(self):
-        """
-        The connection's client id, useful when introspecting the server logs
-        for specific client activity.
+        """Returns the client id that identifies the server side session.
+
+        A client id is a tuple represented by the session id and
+        session password. It can be used to manually connect to an
+        extant server session (which contains associated ephemeral
+        nodes and watches)/ The connection's client id is also useful
+        when introspecting the server logs for specific client
+        activity.
         """
         if self.handle is None:
             return None
@@ -239,34 +337,33 @@ class ZookeeperClient(object):
         return bool(zookeeper.is_unrecoverable(self.handle))
 
     def add_auth(self, scheme, identity):
-        """
-        Adds an authentication identity to this connection. A connection
-        can use multiple authentication identities at the same time, all
-        are checked when verifying acls on a node.
+        """Adds an authentication identity to this connection.
+
+        A connection can use multiple authentication identities at the
+        same time, all are checked when verifying acls on a node.
 
         @param scheme: a string specifying a an authentication scheme
                        valid values include 'digest'.
-        @param identity: a string containingusername and password colon
-                      separated for example 'mary:apples'
+        @param identity: a string containing username and password colon
+                      separated, for example 'mary:apples'
         """
-        self._check_connected()
         d = defer.Deferred()
+        if self._check_connected(d):
+            return d
 
         def _cb_authenticated(result_code):
-            error = self._check_result(result_code, True)
-            if error:
-                return d.errback(error)
+            if self._check_result(result_code, d):
+                return
             d.callback(self)
 
         callback = self._zk_thread_callback(_cb_authenticated)
         result = zookeeper.add_auth(self.handle, scheme, identity, callback)
-        self._check_result(result)
+        self._check_result(result, d)
         return d
 
     def close(self, force=False):
         """
-        Close the underlying socket connection and zookeeper server side
-        session.
+        Close the underlying socket connection and server side session.
 
         @param force: boolean, require the connection to be closed now or
                       an exception be raised.
@@ -276,23 +373,31 @@ class ZookeeperClient(object):
 
         result = zookeeper.close(self.handle)
         self.connected = False
-        self._check_result(result)
-        return result
+        d = defer.Deferred()
 
-    def connect(self, servers=None, timeout=10):
+        if self._check_result(result, d):
+            return d
+        d.callback(True)
+        return d
+
+    def connect(self, servers=None, timeout=10, client_id=None):
         """
         Establish a connection to the given zookeeper server(s).
 
         @param servers: A string specifying the servers and their ports to
-                        connect to.
+                        connect to. Multiple servers can be specified in
+                        comma separated fashion.
         @param timeout: How many seconds to wait on a connection to the
                         zookeeper servers.
+
+        @param session_id:
         @returns A deferred that's fired when the connection is established.
         """
         d = defer.Deferred()
 
         if self.connected:
-            raise zookeeper.ZooKeeperException("Already Connected")
+            return defer.fail(
+                zookeeper.ZooKeeperException("Already Connected"))
 
         # Use a scheduled function to ensure a timeout.
         def _check_timeout():
@@ -311,31 +416,45 @@ class ZookeeperClient(object):
         if servers is not None:
             self._servers = servers
 
-        self.handle = zookeeper.init(
-            self._servers, callback, self._session_timeout)
+        # Assemble client id if specified.
+        if client_id:
+            self.handle = zookeeper.init(
+                self._servers, callback, self._session_timeout, client_id)
+        else:
+            self.handle = zookeeper.init(
+                self._servers, callback, self._session_timeout)
 
         return d
 
     def _cb_connected(
         self, scheduled_timeout, connect_deferred, type, state, path):
+        """This callback is invoked through the lifecycle of the connection.
 
+        It's used for all connection level events and session events.
+        """
         # Cancel the timeout delayed task if it hasn't fired.
         if scheduled_timeout.active():
             scheduled_timeout.cancel()
 
+        # Update connected boolean
+        if state == zookeeper.CONNECTED_STATE:
+            self.connected = True
+        elif state != zookeeper.CONNECTING_STATE:
+            self.connected = False
+
         if connect_deferred.called:
             # If we timed out and then connected, then close the conn.
-            if state == zookeeper.CONNECTED_STATE:
-                self.connected = True
+            if state == zookeeper.CONNECTED_STATE and scheduled_timeout.called:
                 self.close()
-            # If the client is reused across multiple connect/close
-            # cycles, and a previous connect timed out, then a
-            # subsequent connect may trigger the previous connect's
-            # handler notifying of a CONNECTING_STATE, ignore.
+
+            # Send session events to the callback, in addition to any
+            # duplicate session events that will be sent for extant watches.
+            if self._session_event_callback:
+                self._session_event_callback(
+                    self, ClientEvent(type, state, path))
+
             return
         elif state == zookeeper.CONNECTED_STATE:
-            # Connection established.
-            self.connected = True
             connect_deferred.callback(self)
             return
 
@@ -351,19 +470,19 @@ class ZookeeperClient(object):
         @params acls: A list of dictionaries specifying permissions.
         @params flags: Node creation flags (ephemeral, sequence, persistent)
         """
-        self._check_connected()
         d = defer.Deferred()
+        if self._check_connected(d):
+            return d
 
         def _cb_created(result_code, path):
-            error = self._check_result(result_code, True)
-            if error:
-                return d.errback(error)
+            if self._check_result(result_code, d):
+                return
             d.callback(path)
 
         callback = self._zk_thread_callback(_cb_created)
         result = zookeeper.acreate(
             self.handle, path, data, acls, flags, callback)
-        self._check_result(result)
+        self._check_result(result, d)
         return d
 
     def delete(self, path, version=-1):
@@ -376,18 +495,18 @@ class ZookeeperClient(object):
         @param path: the path of the node to be deleted.
         @param version: the integer version of the node.
         """
-        self._check_connected()
         d = defer.Deferred()
+        if self._check_connected(d):
+            return d
 
         def _cb_delete(result_code):
-            error = self._check_result(result_code, True)
-            if error:
-                return d.errback(error)
+            if self._check_result(result_code, d):
+                return
             d.callback(result_code)
 
         callback = self._zk_thread_callback(_cb_delete)
         result = zookeeper.adelete(self.handle, path, version, callback)
-        self._check_result(result)
+        self._check_result(result, d)
         return d
 
     def exists(self, path):
@@ -395,8 +514,9 @@ class ZookeeperClient(object):
         Check that the given node path exists. Returns a deferred that
         holds the node stat information if the node exists (created,
         modified, version, etc.), or ``None`` if it does not exist.
-        """
 
+        @param path: The path of the node whose existence will be checked.
+        """
         return self._exists(path, None)
 
     def exists_and_watch(self, path):
@@ -406,20 +526,22 @@ class ZookeeperClient(object):
         In addition to the deferred method result, this method returns
         a deferred that is called back when the node is modified or
         removed (once).
-        """
 
+        @param path: The path of the node whose existence will be checked.
+        """
         d = defer.Deferred()
 
-        def callback(*args):
+        def watcher(*args):
             d.callback(ClientEvent(*args))
-        return self._exists(path, callback), d
+        return self._exists(path, watcher), d
 
     def get(self, path):
         """
         Get the node's data for the given node path. Returns a
         deferred that holds the content of the node.
-        """
 
+        @param path: The path of the node whose content will be retrieved.
+        """
         return self._get(path, None)
 
     def get_and_watch(self, path):
@@ -429,17 +551,20 @@ class ZookeeperClient(object):
         In addition to the deferred method result, this method returns
         a deferred that is called back when the node is modified or
         removed (once).
-        """
 
+        @param path: The path of the node whose content will be retrieved.
+        """
         d = defer.Deferred()
 
-        def callback(*args):
+        def watcher(*args):
             d.callback(ClientEvent(*args))
-        return self._get(path, callback), d
+        return self._get(path, watcher), d
 
     def get_children(self, path):
         """
         Get the ids of all children directly under the given path.
+
+        @param path: The path of the node whose children will be retrieved.
         """
         return self._get_children(path, None)
 
@@ -450,13 +575,14 @@ class ZookeeperClient(object):
         In addition to the deferred method result, this method returns
         a deferred that is called back when a change happens on the
         provided path (once).
-        """
 
+        @param path: The path of the node whose children will be retrieved.
+        """
         d = defer.Deferred()
 
-        def callback(*args):
+        def watcher(*args):
             d.callback(ClientEvent(*args))
-        return self._get_children(path, callback), d
+        return self._get_children(path, watcher), d
 
     def get_acl(self, path):
         """
@@ -464,19 +590,21 @@ class ZookeeperClient(object):
 
         Each acl is a dictionary containing keys/values for scheme, id,
         and perms.
+
+        @param path: The path of the node whose acl will be retrieved.
         """
-        self._check_connected()
         d = defer.Deferred()
+        if self._check_connected(d):
+            return d
 
         def _cb_get_acl(result_code, acls, stat):
-            error = self._check_result(result_code, True)
-            if error:
-                return d.errback(error)
+            if self._check_result(result_code, d):
+                return
             d.callback((acls, stat))
 
         callback = self._zk_thread_callback(_cb_get_acl)
         result = zookeeper.aget_acl(self.handle, path, callback)
-        self._check_result(result)
+        self._check_result(result, d)
         return d
 
     def set_acl(self, path, acls, version=-1):
@@ -502,19 +630,19 @@ class ZookeeperClient(object):
                         doesn't match the version on the server, then a
                         BadVersionException is raised.
         """
-        self._check_connected()
         d = defer.Deferred()
+        if self._check_connected(d):
+            return d
 
         def _cb_set_acl(result_code):
-            error = self._check_result(result_code, True)
-            if error:
-                return d.errback(error)
+            if self._check_result(result_code, d):
+                return
             d.callback(result_code)
 
         callback = self._zk_thread_callback(_cb_set_acl)
         result = zookeeper.aset_acl(
             self.handle, path, version, acls, callback)
-        self._check_result(result)
+        self._check_result(result, d)
         return d
 
     def set(self, path, data="", version=-1):
@@ -528,18 +656,18 @@ class ZookeeperClient(object):
         @param data: The data to store on the node.
         @param version: Integer version value
         """
-        self._check_connected()
         d = defer.Deferred()
+        if self._check_connected(d):
+            return d
 
         def _cb_set(result_code, node_stat):
-            error = self._check_result(result_code, True)
-            if error:
-                return d.errback(error)
+            if self._check_result(result_code, d):
+                return
             d.callback(node_stat)
 
         callback = self._zk_thread_callback(_cb_set)
         result = zookeeper.aset(self.handle, path, data, version, callback)
-        self._check_result(result)
+        self._check_result(result, d)
         return d
 
     def set_connection_watcher(self, watcher):
@@ -549,25 +677,72 @@ class ZookeeperClient(object):
 
         @param: watcher function
         """
+        if not callable(watcher):
+            raise SyntaxError("Invalid Watcher %r" % (watcher))
         watcher = self._wrap_watcher(watcher)
         zookeeper.set_watcher(self.handle, watcher)
 
-    def sync(self, path="/"):
+    def set_session_callback(self, callback):
+        """Set a callback to receive session events.
+
+        Session events are by default ignored. Interested applications
+        may choose to set a session event watcher on the connection
+        to receive session events. Session events are typically broadcast
+        by the libzookeeper library to all extant watchers, but the
+        twisted integration using deferreds is not capable of receiving
+        multiple values (session events and watch events), so this
+        client implementation instead provides for a user defined callback
+        to be invoked with them instead. The callback receives a single
+        parameter, the session event in the form of a ClientEvent instance.
+
+        Additional details on session events
+        ------------------------------------
+        http://bit.ly/mQrOMY
+        http://bit.ly/irKpfn
         """
-        Flushes the zookeeper connection to the leader.
+        if not callable(callback):
+            raise TypeError("Invalid callback %r" % callback)
+        self._session_event_callback = callback
+
+    def set_connection_error_callback(self, callback):
+        """Set a callback to receive connection error exceptions.
+
+        By default the error will be raised when the client API
+        call is made. Setting a connection level error handler allows
+        applications to centralize their handling of connection loss,
+        instead of having to guard every zk interaction.
+
+        The callback receives two parameters, the client instance
+        and the exception.
+        """
+        if not callable(callback):
+            raise TypeError("Invalid callback %r" % callback)
+        self._connection_error_callback = callback
+
+    def set_determinstic_order(self, boolean):
+        """
+        The zookeeper client will by default randomize the server hosts
+        it will connect to unless this is set to True.
+
+        This is a global setting across connections.
+        """
+        zookeeper.deterministic_conn_order(bool(boolean))
+
+    def sync(self, path="/"):
+        """Flushes the connected zookeeper server with the leader.
 
         @param path: The root path to flush, all child nodes are also flushed.
         """
-        self._check_connected()
         d = defer.Deferred()
+        if self._check_connected(d):
+            return d
 
         def _cb_sync(result_code, path):
-            error = self._check_result(result_code, True)
-            if error:
-                return d.errback(error)
+            if self._check_result(result_code, d):
+                return
             d.callback(path)
 
         callback = self._zk_thread_callback(_cb_sync)
         result = zookeeper.async(self.handle, path, callback)
-        self._check_result(result)
+        self._check_result(result, d)
         return d

@@ -1923,6 +1923,7 @@ class MockReturner(Task):
     def run(self, path):
         return Mock(self.mocker, path)
 
+
 def mock_returner_recorder(mocker, event):
     """Events that lead to other events must return mock objects."""
     parent_path = event.path.parent_path

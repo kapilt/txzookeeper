@@ -73,9 +73,9 @@ class SecurityTests(ZookeeperTestCase):
     def connect_users(self, *users):
         clients = []
         for name in users:
-            ident_user = getattr(self, "ident_%s"%(name), None)
+            ident_user = getattr(self, "ident_%s" % (name), None)
             if ident_user is None:
-                raise AttributeError("Invalid User %s"%(name))
+                raise AttributeError("Invalid User %s" % (name))
             client = ZookeeperClient("127.0.0.1:2181", 3000)
             clients.append(client)
             yield self.open_and_authenticate(client, ident_user)
