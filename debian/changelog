@@ -2,7 +2,7 @@ txzookeeper (0.8.0-0ubuntu1) natty; urgency=low
 
   * Much improved session event and connection error handling (and cluster tests)
 
- -- Kapil Thangavelu <kapil.thangavelu@canonical.com>  Tue, 5 Jul 2011 22:07 -0500
+ -- Kapil Thangavelu <kapil.thangavelu@canonical.com>  Tue, 5 Jul 2011 22:07:00 -0500
 
 txzookeeper (0.2.1-0ubuntu2) natty; urgency=low
 
