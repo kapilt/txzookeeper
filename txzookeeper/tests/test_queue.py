@@ -17,10 +17,10 @@
 #  along with txzookeeper.  If not, see <http://www.gnu.org/licenses/>.
 #
 
-
 from zookeeper import NoNodeException
 from twisted.internet.defer import (
     inlineCallbacks, returnValue, DeferredList, Deferred, succeed, fail)
+
 
 from txzookeeper import ZookeeperClient
 from txzookeeper.client import NotConnectedException

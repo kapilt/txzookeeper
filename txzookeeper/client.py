@@ -171,7 +171,7 @@ class ZookeeperClient(object):
             d.errback(NotConnectedException("not connected"))
             return d
 
-    def _check_result(self, result_code, deferred, extra_codes=()):
+    def _check_result(self, result_code, deferred, extra_codes=(), path=None):
         """Check an API call or result for errors.
 
         :param result_code: The api result code.
@@ -184,6 +184,8 @@ class ZookeeperClient(object):
         error = None
         if not result_code == zookeeper.OK and not result_code in extra_codes:
             error_msg = zookeeper.zerror(result_code)
+            if path is not None:
+                error_msg += " %s" % path
             error_class = ERROR_MAPPING.get(
                 result_code, zookeeper.ZooKeeperException)
             error = error_class(error_msg)
@@ -212,14 +214,14 @@ class ZookeeperClient(object):
             return d
 
         def _cb_get(result_code, value, stat):
-            if self._check_result(result_code, d):
+            if self._check_result(result_code, d, path=path):
                 return
             d.callback((value, stat))
 
         callback = self._zk_thread_callback(_cb_get)
         watcher = self._wrap_watcher(watcher)
         result = zookeeper.aget(self.handle, path, watcher, callback)
-        self._check_result(result, d)
+        self._check_result(result, d, path=path)
         return d
 
     def _get_children(self, path, watcher):
@@ -228,14 +230,14 @@ class ZookeeperClient(object):
             return d
 
         def _cb_get_children(result_code, children):
-            if self._check_result(result_code, d):
+            if self._check_result(result_code, d, path=path):
                 return
             d.callback(children)
 
         callback = self._zk_thread_callback(_cb_get_children)
         watcher = self._wrap_watcher(watcher)
         result = zookeeper.aget_children(self.handle, path, watcher, callback)
-        self._check_result(result, d)
+        self._check_result(result, d, path=path)
         return d
 
     def _exists(self, path, watcher):
@@ -245,14 +247,14 @@ class ZookeeperClient(object):
 
         def _cb_exists(result_code, stat):
             if self._check_result(
-                result_code, d, extra_codes=(zookeeper.NONODE,)):
+                result_code, d, extra_codes=(zookeeper.NONODE,), path=path):
                 return
             d.callback(stat)
 
         callback = self._zk_thread_callback(_cb_exists)
         watcher = self._wrap_watcher(watcher)
         result = zookeeper.aexists(self.handle, path, watcher, callback)
-        self._check_result(result, d)
+        self._check_result(result, d, path=path)
         return d
 
     def _wrap_watcher(self, watcher):
@@ -475,14 +477,14 @@ class ZookeeperClient(object):
             return d
 
         def _cb_created(result_code, path):
-            if self._check_result(result_code, d):
+            if self._check_result(result_code, d, path=path):
                 return
             d.callback(path)
 
         callback = self._zk_thread_callback(_cb_created)
         result = zookeeper.acreate(
             self.handle, path, data, acls, flags, callback)
-        self._check_result(result, d)
+        self._check_result(result, d, path=path)
         return d
 
     def delete(self, path, version=-1):
@@ -500,13 +502,13 @@ class ZookeeperClient(object):
             return d
 
         def _cb_delete(result_code):
-            if self._check_result(result_code, d):
+            if self._check_result(result_code, d, path=path):
                 return
             d.callback(result_code)
 
         callback = self._zk_thread_callback(_cb_delete)
         result = zookeeper.adelete(self.handle, path, version, callback)
-        self._check_result(result, d)
+        self._check_result(result, d, path=path)
         return d
 
     def exists(self, path):
@@ -598,13 +600,13 @@ class ZookeeperClient(object):
             return d
 
         def _cb_get_acl(result_code, acls, stat):
-            if self._check_result(result_code, d):
+            if self._check_result(result_code, d, path=path):
                 return
             d.callback((acls, stat))
 
         callback = self._zk_thread_callback(_cb_get_acl)
         result = zookeeper.aget_acl(self.handle, path, callback)
-        self._check_result(result, d)
+        self._check_result(result, d, path=path)
         return d
 
     def set_acl(self, path, acls, version=-1):
@@ -642,7 +644,7 @@ class ZookeeperClient(object):
         callback = self._zk_thread_callback(_cb_set_acl)
         result = zookeeper.aset_acl(
             self.handle, path, version, acls, callback)
-        self._check_result(result, d)
+        self._check_result(result, d, path=path)
         return d
 
     def set(self, path, data="", version=-1):
@@ -661,13 +663,13 @@ class ZookeeperClient(object):
             return d
 
         def _cb_set(result_code, node_stat):
-            if self._check_result(result_code, d):
+            if self._check_result(result_code, d, path=path):
                 return
             d.callback(node_stat)
 
         callback = self._zk_thread_callback(_cb_set)
         result = zookeeper.aset(self.handle, path, data, version, callback)
-        self._check_result(result, d)
+        self._check_result(result, d, path=path)
         return d
 
     def set_connection_watcher(self, watcher):
@@ -738,11 +740,11 @@ class ZookeeperClient(object):
             return d
 
         def _cb_sync(result_code, path):
-            if self._check_result(result_code, d):
+            if self._check_result(result_code, d, path=path):
                 return
             d.callback(path)
 
         callback = self._zk_thread_callback(_cb_sync)
         result = zookeeper.async(self.handle, path, callback)
-        self._check_result(result, d)
+        self._check_result(result, d, path=path)
         return d
