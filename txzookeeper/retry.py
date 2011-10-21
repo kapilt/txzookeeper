@@ -38,9 +38,9 @@ def retry(name, delay=True):
     @inlineCallbacks
     def wrapper(retry_client, *args, **kw):
         method = getattr(retry_client.client, name)
-        # If we keep retrying past the session timeout without success just
-        # die, the session expired is fatal.
 
+        # If we keep retrying past the session timeout without success just
+        # die, the session expiry is fatal.
         session_timeout = retry_client.client.session_timeout
         if session_timeout is None:
             session_timeout = 10
@@ -61,6 +61,45 @@ def retry(name, delay=True):
                     continue
                 raise
             returnValue(value)
+
+    return functools.update_wrapper(wrapper, original)
+
+
+def retry_watch(name, delay=True):
+    # the signature of watch methods returns back a tuple of deferreds
+    # not a deferred returning a tuple of deferreds.
+    original = getattr(ZookeeperClient, name)
+
+    def wrapper(retry_client, *args, **kw):
+        method = getattr(retry_client.client, name)
+        session_timeout = retry_client.client.session_timeout
+        if session_timeout is None:
+            session_timeout = 10
+        max_time = session_timeout * 1.5 + time.time()
+
+        v_d, w_d = method(*args, **kw)
+
+        def retry_inner(f):
+            """Retry callback
+
+            On retry check the error, and chain the watch callback to
+            the original handed back from the api.  Any retryable
+            error here would invalidate the watch as is.
+            """
+            if not is_retryable(f.value):
+                return f
+            if max_time <= time.time():
+                return f
+            r_v_d, r_w_d = method(*args, **kw)
+            # If we need to retry again.
+            r_v_d.addErrback(retry_inner)
+            # Chain the new watch deferred to the old, presuming its doa.
+            r_w_d.chainDeferred(w_d)
+            # Insert back into the callback chain.
+            return r_v_d
+        v_d.addErrback(retry_inner)
+
+        return v_d, w_d
 
     return functools.update_wrapper(wrapper, original)
 
@@ -97,7 +136,7 @@ class RetryClient(object):
     get_acl = retry("get_acl")
     get_children = retry("get_children")
     set_acl = retry("set_acl")
-    set = retry("set_acl")
+    set = retry("set")
     sync = retry("sync")
 
     # pass through methods
@@ -109,9 +148,9 @@ class RetryClient(object):
     connect = passmethod("connect")
 
     # watch methods
-    exists_and_watch = None
-    get_and_watch = None
-    get_children_and_watch = None
+    exists_and_watch = retry_watch("exists_and_watch")
+    get_and_watch = retry_watch("get_and_watch")
+    get_children_and_watch = retry_watch("get_children_and_watch")
 
     # passthrough properties
     state = property(passproperty("state"))
