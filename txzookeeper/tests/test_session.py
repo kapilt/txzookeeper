@@ -116,7 +116,14 @@ class ClientSessionTests(ZookeeperTestCase):
         """
         @inlineCallbacks
         def connection_error_handler(connection, error):
+            # Moved management of this connection attribute out of the
+            # default behavior for a connection exception, to support
+            # the retry facade. Under the hood libzk is going to be
+            # trying to transparently reconnect
+            connection.connected = False
+
             # On loss of the connection, reconnect the client w/ same session.
+
             yield connection.connect(
                 self.cluster[1].address, client_id=connection.client_id)
             returnValue(23)

@@ -189,8 +189,6 @@ class ZookeeperClient(object):
             error = error_class(error_msg)
 
             if is_connection_exception(error):
-                # Mark the client as disconnected.
-                #self.connected = False
                 # Route connection errors to a connection level error
                 # handler if specified.
                 if self._connection_error_callback:
