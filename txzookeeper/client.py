@@ -274,6 +274,13 @@ class ZookeeperClient(object):
             if self._session_event_callback:
                 self._session_event_callback(
                     self, ClientEvent(event_type, conn_state, path))
+            # We do propogate to watch deferreds, in one case in
+            # particular, namely if the session is expired, in which
+            # case the watches are dead, and we send an appropriate
+            # error
+            if conn_state == zookeeper.EXPIRED_SESSION_STATE:
+                error = zookeeper.SessionExpiredException("Session expired")
+                return watcher(None, None, None, error=error)
         else:
             return watcher(event_type, conn_state, path)
 
@@ -531,8 +538,11 @@ class ZookeeperClient(object):
         """
         d = defer.Deferred()
 
-        def watcher(*args):
-            d.callback(ClientEvent(*args))
+        def watcher(event_type, conn_state, path, error=None):
+            if error:
+                d.errback(error)
+            else:
+                d.callback(ClientEvent(event_type, conn_state, path))
         return self._exists(path, watcher), d
 
     def get(self, path):
@@ -556,8 +566,11 @@ class ZookeeperClient(object):
         """
         d = defer.Deferred()
 
-        def watcher(*args):
-            d.callback(ClientEvent(*args))
+        def watcher(event_type, conn_state, path, error=None):
+            if error:
+                d.errback(error)
+            else:
+                d.callback(ClientEvent(event_type, conn_state, path))
         return self._get(path, watcher), d
 
     def get_children(self, path):
@@ -580,8 +593,11 @@ class ZookeeperClient(object):
         """
         d = defer.Deferred()
 
-        def watcher(*args):
-            d.callback(ClientEvent(*args))
+        def watcher(event_type, conn_state, path, error=None):
+            if error:
+                d.errback(error)
+            else:
+                d.callback(ClientEvent(event_type, conn_state, path))
         return self._get_children(path, watcher), d
 
     def get_acl(self, path):

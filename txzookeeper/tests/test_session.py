@@ -150,8 +150,9 @@ class ClientSessionTests(ZookeeperTestCase):
         events_received = Deferred()
 
         def session_event_callback(connection, e):
+            print e
             session_events.append(e)
-            if len(session_events) == 4:
+            if len(session_events) == 8:
                 events_received.callback(True)
 
         # Connect to a node in the cluster and establish a watch
@@ -159,8 +160,15 @@ class ClientSessionTests(ZookeeperTestCase):
         self.client.set_session_callback(session_event_callback)
         yield self.client.connect()
 
-        child_d, watch_d = self.client.get_children_and_watch("/")
-        yield child_d
+        # Setup some watches to verify they are cleaned out on expiration.
+        d, e_watch_d = self.client.exists_and_watch("/")
+        yield d
+
+        d, g_watch_d = self.client.get_and_watch("/")
+        yield d
+
+        d, c_watch_d = self.client.get_children_and_watch("/")
+        yield d
 
         # Connect a client to the same session on a different node.
         self.client2 = ZookeeperClient(self.cluster[0].address)
@@ -171,8 +179,10 @@ class ClientSessionTests(ZookeeperTestCase):
 
         # It can take some time for this to propagate
         yield events_received
-        self.assertEqual(len(session_events), 4)
-        self.assertEqual(session_events[-1].state_name, "expired")
+        self.assertEqual(len(session_events), 8)
+        # The last four (conn + 3 watches) are all expired
+        for evt in session_events[4:]:
+            self.assertEqual(evt.state_name, "expired")
 
         # The connection is dead without reconnecting.
         yield self.assertFailure(
@@ -180,6 +190,9 @@ class ClientSessionTests(ZookeeperTestCase):
             NotConnectedException, ConnectionException)
 
         self.assertTrue(self.client.unrecoverable)
+        yield self.assertFailure(e_watch_d, zookeeper.SessionExpiredException)
+        yield self.assertFailure(g_watch_d, zookeeper.SessionExpiredException)
+        yield self.assertFailure(c_watch_d, zookeeper.SessionExpiredException)
 
         # If a reconnect attempt is made with a dead session id
         #yield self.client.connect(client_id=self.client.client_id)
