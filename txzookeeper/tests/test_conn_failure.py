@@ -1,7 +1,7 @@
 import zookeeper
 
 from twisted.internet import reactor
-from twisted.internet.defer import inlineCallbacks, Deferred
+from twisted.internet.defer import inlineCallbacks
 
 from txzookeeper import ZookeeperClient
 from txzookeeper.tests import ZookeeperTestCase, utils
