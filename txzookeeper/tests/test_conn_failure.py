@@ -114,6 +114,8 @@ class WatchDeliveryConnectionFailedTest(ZookeeperTestCase):
         The zk server effectively sends the watch delivery to the client,
         but the client never recieves it.
         """
+        #zookeeper.set_debug_level(zookeeper.LOG_LEVEL_DEBUG)
+
         yield self.proxied_client.connect()
         cpath = "/test"
 
@@ -123,55 +125,31 @@ class WatchDeliveryConnectionFailedTest(ZookeeperTestCase):
         self.assertEqual((yield exists_d), None)
 
         # Pause the connection fire the watch, and blackhole the data.
-        self.proxy.pause_client()
-        self.proxy.pause_server()
+        self.proxy.set_blocked(True)
         yield self.direct_client.create(cpath)
-        # give a moment to send the watch, it won't be passed to the client
-        yield self.sleep(0.3)
+        self.proxy.set_blocked(False)
         self.proxy.loose_connection()
 
         # We should still get the exists event.
         yield watch_d
 
     @inlineCallbacks
-    def xtest_session_exception_without_session_event(self):
-        zookeeper.set_debug_level(zookeeper.LOG_LEVEL_DEBUG)
-        yield self.proxied_client.connect(
-            client_id=self.direct_client.client_id)
-        yield self.proxied_client.exists("/")
-        yield self.sleep(0.5)
-        yield self.direct_client.close()
-        # Wait for session expiration
-        yield self.sleep(0.5)
+    def test_session_exception(self):
+        """Test session expiration.
+
+        On a single server, the best way to produce a session expiration is
+        timing out the client.
+        """
+        yield self.proxied_client.connect()
+        data = yield self.proxied_client.exists("/")
+        self.assertTrue(data)
+        self.proxy.set_blocked(True)
+        # Wait for session expiration, on a single server options are limited
+        yield self.sleep(15)
+        self.proxy.set_blocked(False)
+        self.proxy.loose_connection()
+        # Wait for a reconnect
+        yield self.sleep(2)
         yield self.assertFailure(self.proxied_client.create("/a"),
                            zookeeper.SessionExpiredException)
-        self.assertEqual(len(self.session_events), 0)
-
-    @inlineCallbacks
-    def test_session_exception_with_session_event(self):
-        value = yield self.direct_client.exists("/")
-        self.assertTrue(value)
-        yield self.sleep(0.1)
-
-        client = ZookeeperClient("127.0.0.1:2181", session_timeout=3000)
-        yield client.connect(client_id=self.direct_client.client_id)
-        value = yield client.exists("/")
-        self.assertTrue(value)
-
-        zookeeper.set_debug_level(zookeeper.LOG_LEVEL_DEBUG)
-
-        d = Deferred()
-
-        def wait_for_session_failure(conn, evt):
-            if evt.state_name == "expired":
-                d.callback(True)
-        client.set_session_callback(wait_for_session_failure)
-
-        print "close"
-        self.assertEqual(self.direct_client.client_id, client.client_id)
-        yield self.direct_client.close()
-
-        #print "wait"
-        yield d
-        yield self.assertFailure(client.create("/a"),
-                                 zookeeper.SessionExpiredException)
+        self.assertEqual(self.session_events[-1].state_name, "expired")
