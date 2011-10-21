@@ -93,7 +93,8 @@ def retry_watch(name, delay=True):
             r_v_d, r_w_d = method(*args, **kw)
             # If we need to retry again.
             r_v_d.addErrback(retry_inner)
-            # Chain the new watch deferred to the old, presuming its doa.
+            # Chain the new watch deferred to the old, presuming its doa
+            # if the value deferred errored on a connection error.
             r_w_d.chainDeferred(w_d)
             # Insert back into the callback chain.
             return r_v_d

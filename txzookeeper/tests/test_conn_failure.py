@@ -114,8 +114,6 @@ class WatchDeliveryConnectionFailedTest(ZookeeperTestCase):
         The zk server effectively sends the watch delivery to the client,
         but the client never recieves it.
         """
-        #zookeeper.set_debug_level(zookeeper.LOG_LEVEL_DEBUG)
-
         yield self.proxied_client.connect()
         cpath = "/test"
 

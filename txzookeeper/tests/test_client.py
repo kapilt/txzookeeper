@@ -1082,60 +1082,6 @@ class ClientTests(ZookeeperTestCase):
         d.addErrback(verify_invalid)
         return d
 
-    def xtest_session_expired_event(self):
-        """
-        A client session can be reattached to in a separate connection,
-        if the a session is expired, using the zookeeper connection will
-        raise a SessionExpiredException.
-        """
-        d = self.client.connect()
-
-        class StopTest(Exception):
-            pass
-
-        def new_connection_same_connection(client):
-            self.assertEqual(client.state, zookeeper.CONNECTED_STATE)
-            return ZookeeperClient("127.0.0.1:2181").connect(
-                client_id=client.client_id).addErrback(
-                guard_session_expired, client)
-
-        def guard_session_expired(failure, client):
-            # On occassion we get a session expired event while connecting.
-            failure.trap(ConnectionException)
-            self.assertEqual(failure.value.state_name, "expired")
-            # Stop the test from proceeding
-            raise StopTest()
-
-        def close_new_connection(client):
-            # Verify both connections are using same session
-            self.assertEqual(self.client.client_id, client.client_id)
-            self.assertEqual(client.state, zookeeper.CONNECTED_STATE)
-
-            # Closing one connection will close the session
-            client.close()
-
-            # Continued use of the other client will get a
-            # disconnect exception.
-            return self.client.exists("/")
-
-        def verify_original_closed(failure):
-            if not isinstance(failure, Failure):
-                self.fail("Test did not raise exception.")
-            failure.trap(
-                zookeeper.SessionExpiredException,
-                zookeeper.ConnectionLossException)
-
-            #print "client close"
-            self.client.close()
-            #print "creating new client for teardown"
-            return self.client.connect()
-
-        d.addCallback(new_connection_same_connection)
-        d.addCallback(close_new_connection)
-        d.addBoth(verify_original_closed)
-
-        return d
-
     def test_connect_with_server(self):
         """
         A client's servers can be specified in the connect method.

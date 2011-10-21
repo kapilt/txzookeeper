@@ -27,6 +27,23 @@ from txzookeeper.tests.proxy import ProxyFactory
 from txzookeeper.tests import test_client
 
 
+class RetryCoreTests(ZookeeperTestCase):
+    """Test the retry functions in isolation.
+    """
+
+    def test_passmethod(self):
+        pass
+
+    def test_passproperty(self):
+        pass
+
+    def test_is_retryable(self):
+        pass
+
+    def test_retry_watch(self):
+        pass
+
+
 class RetryClientTests(test_client.ClientTests):
     """Run the full client test suite against the retry facade.
     """
@@ -86,7 +103,7 @@ class RetryClientConnectionLossTest(ZookeeperTestCase):
         yield self.proxy_port.stopListening()
 
     @inlineCallbacks
-    def test_child_watch_fires_upon_reconnect(self):
+    def test_get_children_and_watch(self):
         yield self.proxied_client.connect()
 
         # Setup tree
@@ -109,6 +126,64 @@ class RetryClientConnectionLossTest(ZookeeperTestCase):
         self.assertEqual(self.session_events[-1].state_name, "connected")
 
         yield self.direct_client.create(cpath + "/abc")
+
+        # The original watch is still active
+        yield watch_d
+
+    @inlineCallbacks
+    def test_exists_and_watch(self):
+        yield self.proxied_client.connect()
+
+        cpath = "/test-tree"
+
+        # Block the request
+        self.proxy.set_blocked(True)
+        exists_d, watch_d = self.proxied_client.exists_and_watch(cpath)
+
+        # Create the node
+        yield self.direct_client.create(cpath)
+
+        # Unblock and disconnect
+        self.proxy.set_blocked(False)
+        self.proxy.loose_connection()
+
+        # Call gets retried, see the latest state
+        self.assertTrue((yield exists_d))
+        self.assertEqual(len(self.session_events), 2)
+
+        # And we have reconnect events
+        self.assertEqual(self.session_events[-1].state_name, "connected")
+
+        yield self.direct_client.delete(cpath)
+
+        # The original watch is still active
+        yield watch_d
+
+    @inlineCallbacks
+    def test_get_and_watch(self):
+        yield self.proxied_client.connect()
+
+        # Setup tree
+        cpath = "/test-tree"
+        yield self.direct_client.create(cpath)
+
+        # Block the request
+        self.proxy.set_blocked(True)
+        get_d, watch_d = self.proxied_client.get_and_watch(cpath)
+
+        # Unblock and disconnect
+        self.proxy.set_blocked(False)
+        self.proxy.loose_connection()
+
+        # Call goes through
+        content, stat = yield get_d
+        self.assertEqual(content, '')
+        self.assertEqual(len(self.session_events), 2)
+
+        # And we have reconnect events
+        self.assertEqual(self.session_events[-1].state_name, "connected")
+
+        yield self.direct_client.delete(cpath)
 
         # The original watch is still active
         yield watch_d
