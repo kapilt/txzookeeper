@@ -31,12 +31,6 @@ class ClientSessionTests(ZookeeperTestCase):
         zookeeper.deterministic_conn_order(True)
         zookeeper.set_debug_level(0)
 
-    def sleep(self, delay):
-        """Non-blocking sleep."""
-        deferred = Deferred()
-        reactor.callLater(delay, deferred.callback, None)
-        return deferred
-
     @property
     def cluster(self):
         return CLUSTER

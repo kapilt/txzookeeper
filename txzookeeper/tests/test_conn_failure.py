@@ -1,0 +1,177 @@
+import zookeeper
+
+from twisted.internet import reactor
+from twisted.internet.defer import inlineCallbacks, Deferred
+
+from txzookeeper import ZookeeperClient
+from txzookeeper.tests import ZookeeperTestCase, utils
+from txzookeeper.tests.proxy import ProxyFactory
+
+
+class WatchDeliveryConnectionFailedTest(ZookeeperTestCase):
+    """Watches are still sent on reconnect.
+    """
+
+    def setUp(self):
+        super(WatchDeliveryConnectionFailedTest, self).setUp()
+
+        self.proxy = ProxyFactory("127.0.0.1", 2181)
+        self.proxy_port = reactor.listenTCP(0, self.proxy)
+        host = self.proxy_port.getHost()
+        self.proxied_client = ZookeeperClient(
+            "%s:%s" % (host.host, host.port))
+        self.direct_client = ZookeeperClient("127.0.0.1:2181", 3000)
+        self.session_events = []
+
+        def session_event_collector(conn, event):
+            self.session_events.append(event)
+
+        self.proxied_client.set_session_callback(session_event_collector)
+        return self.direct_client.connect()
+
+    @inlineCallbacks
+    def tearDown(self):
+        zookeeper.set_debug_level(0)
+        if self.proxied_client.connected:
+            yield self.proxied_client.close()
+        if not self.direct_client.connected:
+            yield self.direct_client.connect()
+        utils.deleteTree(handle=self.direct_client.handle)
+        yield self.direct_client.close()
+        self.proxy.loose_connection()
+        yield self.proxy_port.stopListening()
+
+    @inlineCallbacks
+    def test_child_watch_fires_upon_reconnect(self):
+        yield self.proxied_client.connect()
+
+        # Setup tree
+        cpath = "/test-tree"
+        yield self.direct_client.create(cpath)
+
+        # Setup watch
+        child_d, watch_d = self.proxied_client.get_children_and_watch(cpath)
+
+        self.assertEqual((yield child_d), [])
+
+        # Kill the connection and fire the watch
+        self.proxy.loose_connection()
+        yield self.direct_client.create(
+            cpath + "/abc", flags=zookeeper.SEQUENCE)
+
+        # We should still get the child event.
+        yield watch_d
+
+        # We get two pairs of (connecting, connected) for the conn and watch
+        self.assertEqual(len(self.session_events), 4)
+
+    @inlineCallbacks
+    def test_exists_watch_fires_upon_reconnect(self):
+        yield self.proxied_client.connect()
+        cpath = "/test"
+
+        # Setup watch
+        exists_d, watch_d = self.proxied_client.exists_and_watch(cpath)
+
+        self.assertEqual((yield exists_d), None)
+
+        # Kill the connection and fire the watch
+        self.proxy.loose_connection()
+        yield self.direct_client.create(cpath)
+
+        # We should still get the exists event.
+        yield watch_d
+
+        # We get two pairs of (connecting, connected) for the conn and watch
+        self.assertEqual(len(self.session_events), 4)
+
+    @inlineCallbacks
+    def test_get_watch_fires_upon_reconnect(self):
+        yield self.proxied_client.connect()
+        # Setup tree
+        cpath = "/test"
+        yield self.direct_client.create(cpath, "abc")
+
+        # Setup watch
+        get_d, watch_d = self.proxied_client.get_and_watch(cpath)
+        content, stat = yield get_d
+        self.assertEqual(content, "abc")
+
+        # Kill the connection and fire the watch
+        self.proxy.loose_connection()
+        yield self.direct_client.set(cpath, "xyz")
+
+        # We should still get the exists event.
+        yield watch_d
+
+        # We also two pairs of (connecting, connected) for the conn and watch
+        self.assertEqual(len(self.session_events), 4)
+
+    @inlineCallbacks
+    def test_watch_delivery_failure_resends(self):
+        """Simulate a network failure for the watch delivery
+
+        The zk server effectively sends the watch delivery to the client,
+        but the client never recieves it.
+        """
+        yield self.proxied_client.connect()
+        cpath = "/test"
+
+        # Setup watch
+        exists_d, watch_d = self.proxied_client.exists_and_watch(cpath)
+
+        self.assertEqual((yield exists_d), None)
+
+        # Pause the connection fire the watch, and blackhole the data.
+        self.proxy.pause_client()
+        self.proxy.pause_server()
+        yield self.direct_client.create(cpath)
+        # give a moment to send the watch, it won't be passed to the client
+        yield self.sleep(0.3)
+        self.proxy.loose_connection()
+
+        # We should still get the exists event.
+        yield watch_d
+
+    @inlineCallbacks
+    def xtest_session_exception_without_session_event(self):
+        zookeeper.set_debug_level(zookeeper.LOG_LEVEL_DEBUG)
+        yield self.proxied_client.connect(
+            client_id=self.direct_client.client_id)
+        yield self.proxied_client.exists("/")
+        yield self.sleep(0.5)
+        yield self.direct_client.close()
+        # Wait for session expiration
+        yield self.sleep(0.5)
+        yield self.assertFailure(self.proxied_client.create("/a"),
+                           zookeeper.SessionExpiredException)
+        self.assertEqual(len(self.session_events), 0)
+
+    @inlineCallbacks
+    def test_session_exception_with_session_event(self):
+        value = yield self.direct_client.exists("/")
+        self.assertTrue(value)
+        yield self.sleep(0.1)
+
+        client = ZookeeperClient("127.0.0.1:2181", session_timeout=3000)
+        yield client.connect(client_id=self.direct_client.client_id)
+        value = yield client.exists("/")
+        self.assertTrue(value)
+
+        zookeeper.set_debug_level(zookeeper.LOG_LEVEL_DEBUG)
+
+        d = Deferred()
+
+        def wait_for_session_failure(conn, evt):
+            if evt.state_name == "expired":
+                d.callback(True)
+        client.set_session_callback(wait_for_session_failure)
+
+        print "close"
+        self.assertEqual(self.direct_client.client_id, client.client_id)
+        yield self.direct_client.close()
+
+        #print "wait"
+        yield d
+        yield self.assertFailure(client.create("/a"),
+                                 zookeeper.SessionExpiredException)

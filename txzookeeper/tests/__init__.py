@@ -20,6 +20,7 @@
 import sys
 
 import zookeeper
+from twisted.internet.defer import Deferred
 from twisted.trial.unittest import TestCase
 
 from mocker import MockerTestCase
@@ -42,6 +43,13 @@ class ZookeeperTestCase(TestCase, MockerTestCase):
 
     def get_log(self):
         return open(self.log_file_path).read()
+
+    def sleep(self, delay):
+        """Non-blocking sleep."""
+        from twisted.internet import reactor
+        deferred = Deferred()
+        reactor.callLater(delay, deferred.callback, None)
+        return deferred
 
 
 def egg_test_runner():
