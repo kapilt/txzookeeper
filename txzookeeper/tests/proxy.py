@@ -69,5 +69,7 @@ class ProxyFactory(portforward.ProxyFactory):
     def buildProtocol(self, addr):
         # Track last protocol used, on reconnect any pauses are disabled.
         self.instance = portforward.ProxyFactory.buildProtocol(self, addr)
+        # Propogate the value, the client will aggressively try to
+        # reconnect else.
         self.instance.set_blocked(self._blocked)
         return self.instance

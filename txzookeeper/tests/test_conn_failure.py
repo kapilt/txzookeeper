@@ -146,10 +146,37 @@ class WatchDeliveryConnectionFailedTest(ZookeeperTestCase):
         self.proxy.set_blocked(True)
         # Wait for session expiration, on a single server options are limited
         yield self.sleep(15)
+        # Unblock the proxy for next connect, and then drop the connection.
+        self.proxy.set_blocked(False)
+        self.proxy.loose_connection()
+        # Wait for a reconnect (see below why we can't just use a watch here)
+        yield self.sleep(2)
+        yield self.assertFailure(
+            self.proxied_client.get("/a"),
+            zookeeper.SessionExpiredException)
+        self.assertEqual(self.session_events[-1].state_name, "expired")
+
+    @inlineCallbacks
+    def xtest_binding_bug_session_exception(self):
+        """This test triggers an exception in the python-zookeeper binding.
+
+        File "txzookeeper/client.py", line 491, in create
+           self.handle, path, data, acls, flags, callback)
+        exceptions.SystemError: error return without exception set
+        """
+        yield self.proxied_client.connect()
+        data_d, watch_d = yield self.proxied_client.exists_and_watch("/")
+        self.assertTrue((yield data_d))
+        self.proxy.set_blocked(True)
+        # Wait for session expiration, on a single server options are limited
+        yield self.sleep(15)
+        # Unblock the proxy for next connect, and then drop the connection.
         self.proxy.set_blocked(False)
         self.proxy.loose_connection()
         # Wait for a reconnect
-        yield self.sleep(2)
-        yield self.assertFailure(self.proxied_client.create("/a"),
-                           zookeeper.SessionExpiredException)
+        yield self.assertFailure(watch_d, zookeeper.SessionExpiredException)
+        # Leads to bindings bug failure
+        yield self.assertFailure(
+            self.proxied_client.get("/a"),
+            zookeeper.SessionExpiredException)
         self.assertEqual(self.session_events[-1].state_name, "expired")

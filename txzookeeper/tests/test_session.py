@@ -150,7 +150,6 @@ class ClientSessionTests(ZookeeperTestCase):
         events_received = Deferred()
 
         def session_event_callback(connection, e):
-            print e
             session_events.append(e)
             if len(session_events) == 8:
                 events_received.callback(True)
