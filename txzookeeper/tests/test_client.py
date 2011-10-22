@@ -506,7 +506,7 @@ class ClientTests(ZookeeperTestCase):
 
         def check_exists(path):
             exists, watch = self.client.exists_and_watch(
-                "%s/wooly-mammoth"%node_path)
+                "%s/wooly-mammoth" % node_path)
             watch.chainDeferred(watcher_deferred)
             return exists
 
@@ -517,13 +517,14 @@ class ClientTests(ZookeeperTestCase):
 
         def create_node(client):
             self.assertEqual(client.connected, True)
-            return self.client2.create("%s/wooly-mammoth"%node_path, "extinct")
+            return self.client2.create(
+                "%s/wooly-mammoth" % node_path, "extinct")
 
         def shim(path):
             return watcher_deferred
 
         def verify_watch(event):
-            self.assertEqual(event.path, "%s/wooly-mammoth"%node_path)
+            self.assertEqual(event.path, "%s/wooly-mammoth" % node_path)
             self.assertEqual(event.type, zookeeper.CREATED_EVENT)
 
         d.addCallback(create_container)
