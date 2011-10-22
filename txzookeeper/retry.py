@@ -31,6 +31,16 @@ def sleep(delay):
     return d
 
 
+def get_delay(session_timeout, max_delay=5, session_fraction=30.0):
+    # Allow for the connection to heal by delaying
+    # the retry operation. Use the smaller value
+    # of 1/30 of the session or 5s.
+    retry_delay = session_timeout / (float(session_fraction) * 1000)
+    if retry_delay > max_delay:
+        return max_delay
+    return retry_delay
+
+
 def retry(name, delay=True):
 
     original = getattr(ZookeeperClient, name)
@@ -56,12 +66,8 @@ def retry(name, delay=True):
                     raise
                 if is_retryable(e) and not retry_client.client.unrecoverable:
                     if delay:
-                        # Allow for the connection to heal, 1/30 of the session
-                        # but under 5s
-                        retry_delay = session_timeout / (30.0 * 1000)
-                        if retry_delay > 5:
-                            retry_delay = 5
-                        yield sleep(retry_delay)
+                        # Give the connection a chance to auto-heal.
+                        yield sleep(get_delay(session_timeout))
                     continue
                 raise
             returnValue(value)

@@ -17,11 +17,13 @@
 #  along with txzookeeper.  If not, see <http://www.gnu.org/licenses/>.
 #
 import json
+import zookeeper
 
 from twisted.internet.defer import inlineCallbacks
 
 from txzookeeper.client import ZookeeperClient
-from txzookeeper.retry import RetryClient
+from txzookeeper.retry import (
+    RetryClient, retry, is_retryable, retry_watch, get_delay)
 from txzookeeper.utils import retry_change
 
 from txzookeeper.tests import ZookeeperTestCase, utils
@@ -40,10 +42,21 @@ class RetryCoreTests(ZookeeperTestCase):
         pass
 
     def test_is_retryable(self):
-        pass
+        self.assertEqual(
+            is_retryable(zookeeper.SessionExpiredException()), False)
+        self.assertEqual(
+            is_retryable(zookeeper.ConnectionLossException()), True)
+        self.assertEqual(
+            is_retryable(zookeeper.OperationTimeoutException()), True)
 
     def test_retry_watch(self):
         pass
+
+    def test_get_delay(self):
+        # Verify max value is respected
+        self.assertEqual(get_delay(600 * 1000, 10), 10)
+        # Verify normal calculation
+        self.assertEqual(get_delay(600, 10, 30), 0.02)
 
 
 class RetryClientTests(test_client.ClientTests):
