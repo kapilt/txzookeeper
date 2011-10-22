@@ -16,11 +16,13 @@
 #  You should have received a copy of the GNU Lesser General Public License
 #  along with txzookeeper.  If not, see <http://www.gnu.org/licenses/>.
 #
+import json
 
 from twisted.internet.defer import inlineCallbacks
 
 from txzookeeper.client import ZookeeperClient
 from txzookeeper.retry import RetryClient
+from txzookeeper.utils import retry_change
 
 from txzookeeper.tests import ZookeeperTestCase, utils
 from txzookeeper.tests.proxy import ProxyFactory
@@ -187,3 +189,34 @@ class RetryClientConnectionLossTest(ZookeeperTestCase):
 
         # The original watch is still active
         yield watch_d
+
+    @inlineCallbacks
+    def test_set(self):
+        import zookeeper
+        zookeeper.set_debug_level(zookeeper.LOG_LEVEL_DEBUG)
+        yield self.proxied_client.connect()
+
+        # Setup tree
+        cpath = "/test-tree"
+        yield self.direct_client.create(cpath, json.dumps({"a": 1, "c": 2}))
+
+        def update_node(content, stat):
+            data = json.loads(content)
+            print "data", data
+            data["a"] += 1
+            data["b"] = 0
+            return json.dumps(data)
+
+        # Block the request
+        self.proxy.set_blocked(True)
+        mod_d = retry_change(self.proxied_client, cpath, update_node)
+
+        # Unblock and disconnect
+        self.proxy.set_blocked(False)
+        self.proxy.loose_connection()
+
+        # Call goes through, contents verified.
+        yield mod_d
+        content, stat = yield self.direct_client.get(cpath)
+        self.assertEqual(json.loads(content),
+                         {"a": 2, "b": 0, "c": 2})

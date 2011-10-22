@@ -56,8 +56,12 @@ def retry(name, delay=True):
                     raise
                 if is_retryable(e) and not retry_client.client.unrecoverable:
                     if delay:
-                        # Allow for the connection to heal.
-                        yield sleep(session_timeout / 10.0)
+                        # Allow for the connection to heal, 1/30 of the session
+                        # but under 5s
+                        retry_delay = session_timeout / (30.0 * 1000)
+                        if retry_delay > 5:
+                            retry_delay = 5
+                        yield sleep(retry_delay)
                     continue
                 raise
             returnValue(value)
@@ -65,7 +69,7 @@ def retry(name, delay=True):
     return functools.update_wrapper(wrapper, original)
 
 
-def retry_watch(name, delay=True):
+def retry_watch(name):
     # the signature of watch methods returns back a tuple of deferreds
     # not a deferred returning a tuple of deferreds.
     original = getattr(ZookeeperClient, name)
@@ -86,9 +90,14 @@ def retry_watch(name, delay=True):
             the original handed back from the api.  Any retryable
             error here would invalidate the watch as is.
             """
+            # If the error isn't known, re-raise.
             if not is_retryable(f.value):
                 return f
+            # If we've exceeded the max allotted time, re-raise.
             if max_time <= time.time():
+                return f
+            # If the client's been explicitly closed, re-raise
+            if not retry_client.client.connected:
                 return f
             r_v_d, r_w_d = method(*args, **kw)
             # If we need to retry again.

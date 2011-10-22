@@ -303,7 +303,8 @@ class ZookeeperClient(object):
     @property
     def session_timeout(self):
         """
-        What's the negotiated session timeout for this connection, in seconds.
+        The negotiated session timeout for this connection, in milliseconds.
+
         If the client is not connected the value is None.
         """
         if self.connected:
