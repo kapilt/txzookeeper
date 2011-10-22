@@ -1,3 +1,8 @@
+"""
+A retry client facade, that transparently handles transient connection
+errors.
+"""
+
 import functools
 import time
 
@@ -7,15 +12,10 @@ from twisted.internet.defer import inlineCallbacks, returnValue, Deferred
 
 from client import ZookeeperClient
 
-#
-# 1. passthrough methods (connect, close, set_determinstic_order)
-# 2. retry methods returning deferreds
-# 3. retry method returning two deferreds (watches)
-# 4. properties
-#
-
 
 def is_retryable(e):
+    """Determine if an exception signfies a recoverable connection error.
+    """
     return isinstance(
         e,
         (zookeeper.ClosingException,
@@ -24,7 +24,8 @@ def is_retryable(e):
 
 
 def sleep(delay):
-    """Non-blocking sleep."""
+    """Non-blocking sleep.
+    """
     from twisted.internet import reactor
     d = Deferred()
     reactor.callLater(delay, d.callback, None)
@@ -32,17 +33,53 @@ def sleep(delay):
 
 
 def get_delay(session_timeout, max_delay=5, session_fraction=30.0):
-    # Allow for the connection to heal by delaying
-    # the retry operation. Use the smaller value
-    # of 1/30 of the session or 5s.
+    """Get retry delay between retrying an operation.
+
+    Returns either the specified fraction of a session timeout or the
+    max delay, whichever is smaller.
+
+    The goal is to allow for the connection time to auto-heal, before
+    retrying an operation.
+
+    :param session_timeout: The timeout for the session, in milliseconds
+    :param max_delay: The max delay for a retry, in seconds.
+    :param session_fraction: The fractinoal amount of a timeout to wait
+    """
     retry_delay = session_timeout / (float(session_fraction) * 1000)
     if retry_delay > max_delay:
         return max_delay
+
     return retry_delay
 
 
-def retry(name, delay=True):
+def check_retryable(retry_client, max_time, error):
+    """Check if the operation is retryable.
+    """
+    # Only if the error is known.
+    if not is_retryable(error):
+        return False
 
+    # Only if we've haven't exceeded the max allotted time.
+    if max_time <= time.time():
+        return False
+
+    # Only if the client hasn't been explicitly closed
+    if not retry_client.connected:
+        return False
+
+    # Only If the client is in a recoverable state
+    if retry_client.unrecoverable:
+        return False
+
+    return True
+
+
+def retry(name):
+    """Returns a facade method that incorporates automatically retrying.
+
+    :param name: The name of the zookeeperclient method to decorate with retry.
+    :param delay: Whether delay should be employed between operations.
+    """
     original = getattr(ZookeeperClient, name)
 
     @inlineCallbacks
@@ -51,9 +88,7 @@ def retry(name, delay=True):
 
         # If we keep retrying past the session timeout without success just
         # die, the session expiry is fatal.
-        session_timeout = retry_client.client.session_timeout
-        if session_timeout is None:
-            session_timeout = 10
+        session_timeout = retry_client.session_timeout or 10
         max_time = session_timeout * 1.5 + time.time()
 
         while 1:
@@ -62,58 +97,64 @@ def retry(name, delay=True):
                 if isinstance(value, Deferred):
                     value = yield value
             except Exception, e:
-                if max_time <= time.time():
+                if not check_retryable(retry_client, max_time, e):
                     raise
-                if is_retryable(e) and not retry_client.client.unrecoverable:
-                    if delay:
-                        # Give the connection a chance to auto-heal.
-                        yield sleep(get_delay(session_timeout))
-                    continue
-                raise
+                # Give the connection a chance to auto-heal.
+                yield sleep(get_delay(session_timeout))
+                continue
+
             returnValue(value)
 
     return functools.update_wrapper(wrapper, original)
 
 
 def retry_watch(name):
-    # the signature of watch methods returns back a tuple of deferreds
-    # not a deferred returning a tuple of deferreds.
+    """Returns a facade method with retry for methods that return watches.
+
+    :param name: The name of the zookeeperclient method to decorate with retry.
+    :param delay: Whether delay should be employed between operations.
+    """
+    # The signature of watch methods returns back a tuple of deferreds
+    # not a deferred returning a tuple of deferreds, hence no inlinecallbacks.
     original = getattr(ZookeeperClient, name)
 
     def wrapper(retry_client, *args, **kw):
         method = getattr(retry_client.client, name)
-        session_timeout = retry_client.client.session_timeout
-        if session_timeout is None:
-            session_timeout = 10
+        session_timeout = retry_client.session_timeout or 10
         max_time = session_timeout * 1.5 + time.time()
 
         v_d, w_d = method(*args, **kw)
 
-        def retry_inner(f):
-            """Retry callback
-
-            On retry check the error, and chain the watch callback to
-            the original handed back from the api.  Any retryable
-            error here would invalidate the watch as is.
+        def retry_delay(f):
+            """Retry operation delay, verifies retryability and delays.
             """
-            # If the error isn't known, re-raise.
-            if not is_retryable(f.value):
+            # Check that operation is retryable.
+            if not check_retryable(retry_client, max_time, f.value):
                 return f
-            # If we've exceeded the max allotted time, re-raise.
-            if max_time <= time.time():
-                return f
-            # If the client's been explicitly closed, re-raise
-            if not retry_client.client.connected:
-                return f
+
+            # Give the connection a chance to auto-heal
+            d = sleep(get_delay(session_timeout))
+            d.addCallback(retry_inner)
+            return d
+
+        def retry_inner(f):
+            """Retry operation invoker.
+            """
+            # Invoke the method
             r_v_d, r_w_d = method(*args, **kw)
+
             # If we need to retry again.
-            r_v_d.addErrback(retry_inner)
+            r_v_d.addErrback(retry_delay)
+
             # Chain the new watch deferred to the old, presuming its doa
             # if the value deferred errored on a connection error.
             r_w_d.chainDeferred(w_d)
+
             # Insert back into the callback chain.
             return r_v_d
-        v_d.addErrback(retry_inner)
+
+        # Attach the retry
+        v_d.addErrback(retry_delay)
 
         return v_d, w_d
 
@@ -121,7 +162,8 @@ def retry_watch(name):
 
 
 def passmethod(name):
-
+    """Returns a facade method that directly invokes the client's method.
+    """
     original = getattr(ZookeeperClient, name)
 
     def wrapper(retry_client, *args, **kw):
@@ -132,14 +174,16 @@ def passmethod(name):
 
 
 def passproperty(name):
-
+    """Returns a facade method that delegates to a client's property.
+    """
     def wrapper(retry_client):
         return getattr(retry_client.client, name)
     return wrapper
 
 
 class RetryClient(object):
-
+    """A ZookeeperClient wrapper that transparently performs retries.
+    """
     def __init__(self, client):
         self.client = client
 

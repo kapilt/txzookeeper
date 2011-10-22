@@ -23,7 +23,11 @@ from twisted.internet.defer import inlineCallbacks
 
 from txzookeeper.client import ZookeeperClient
 from txzookeeper.retry import (
-    RetryClient, retry, is_retryable, retry_watch, get_delay)
+    RetryClient, retry, is_retryable, retry_watch, get_delay,
+    passmethod, passproperty)
+from txzookeeper import retry as retry_module
+
+
 from txzookeeper.utils import retry_change
 
 from txzookeeper.tests import ZookeeperTestCase, utils
@@ -35,12 +39,6 @@ class RetryCoreTests(ZookeeperTestCase):
     """Test the retry functions in isolation.
     """
 
-    def test_passmethod(self):
-        pass
-
-    def test_passproperty(self):
-        pass
-
     def test_is_retryable(self):
         self.assertEqual(
             is_retryable(zookeeper.SessionExpiredException()), False)
@@ -49,7 +47,51 @@ class RetryCoreTests(ZookeeperTestCase):
         self.assertEqual(
             is_retryable(zookeeper.OperationTimeoutException()), True)
 
+    def test_passmethod(self):
+
+        def original(foobar):
+            """Hello World"""
+            return 21
+
+        mock_client = self.mocker.mock()
+        self.patch(retry_module, "ZookeeperClient", mock_client)
+
+        mock_client.original
+        self.mocker.result(original)
+        mock_client.original
+        self.mocker.result(original)
+
+        mock_retry = self.mocker.mock()
+        mock_retry.client
+        self.mocker.result(mock_client)
+
+        self.mocker.replay()
+
+        method = passmethod("original")
+        self.assertEqual(method.__doc__, "Hello World")
+        self.assertEqual(method.__name__, "original")
+        self.assertEqual(method(mock_retry, "abc"), 21)
+
+    def test_passproperty(self):
+
+        mock_client = self.mocker.mock()
+        mock_client.abc
+        self.mocker.result(23)
+        mock_retry = self.mocker.mock()
+        mock_retry.client
+        self.mocker.result(mock_client)
+        self.mocker.replay()
+
+        prop = passproperty("abc")
+        self.assertEqual(prop(mock_retry), 23)
+
+    def test_retry(self):
+        pass
+
     def test_retry_watch(self):
+        pass
+
+    def test_check_retryable(self):
         pass
 
     def test_get_delay(self):
@@ -125,7 +167,7 @@ class RetryClientConnectionLossTest(ZookeeperTestCase):
         cpath = "/test-tree"
         yield self.direct_client.create(cpath)
 
-        # Block the request
+        # Block the request (drops all packets.)
         self.proxy.set_blocked(True)
         child_d, watch_d = self.proxied_client.get_children_and_watch(cpath)
 
@@ -182,7 +224,7 @@ class RetryClientConnectionLossTest(ZookeeperTestCase):
         cpath = "/test-tree"
         yield self.direct_client.create(cpath)
 
-        # Block the request
+        # Block the request (drops all packets.)
         self.proxy.set_blocked(True)
         get_d, watch_d = self.proxied_client.get_and_watch(cpath)
 
@@ -205,8 +247,6 @@ class RetryClientConnectionLossTest(ZookeeperTestCase):
 
     @inlineCallbacks
     def test_set(self):
-        import zookeeper
-        zookeeper.set_debug_level(zookeeper.LOG_LEVEL_DEBUG)
         yield self.proxied_client.connect()
 
         # Setup tree
@@ -215,12 +255,11 @@ class RetryClientConnectionLossTest(ZookeeperTestCase):
 
         def update_node(content, stat):
             data = json.loads(content)
-            print "data", data
             data["a"] += 1
             data["b"] = 0
             return json.dumps(data)
 
-        # Block the request
+        # Block the request (drops all packets.)
         self.proxy.set_blocked(True)
         mod_d = retry_change(self.proxied_client, cpath, update_node)
 

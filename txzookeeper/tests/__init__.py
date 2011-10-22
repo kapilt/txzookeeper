@@ -51,6 +51,30 @@ class ZookeeperTestCase(TestCase, MockerTestCase):
         reactor.callLater(delay, deferred.callback, None)
         return deferred
 
+    _missing_attr = object()
+
+    def patch(self, object, attr, value):
+        """Replace an object's attribute, and restore original value later.
+
+        Returns the original value of the attribute if any or None.
+        """
+        original_value = getattr(object, attr, self._missing_attr)
+
+        @self.addCleanup
+        def restore_original():
+            if original_value is self._missing_attr:
+                try:
+                    delattr(object, attr)
+                except AttributeError:
+                    pass
+            else:
+                setattr(object, attr, original_value)
+        setattr(object, attr, value)
+
+        if original_value is self._missing_attr:
+            return None
+        return original_value
+
 
 def egg_test_runner():
     """
