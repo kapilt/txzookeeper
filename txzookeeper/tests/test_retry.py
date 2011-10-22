@@ -16,14 +16,16 @@
 #  You should have received a copy of the GNU Lesser General Public License
 #  along with txzookeeper.  If not, see <http://www.gnu.org/licenses/>.
 #
+
 import json
+import time
 import zookeeper
 
-from twisted.internet.defer import inlineCallbacks
+from twisted.internet.defer import inlineCallbacks, fail, succeed, Deferred
 
 from txzookeeper.client import ZookeeperClient
 from txzookeeper.retry import (
-    RetryClient, retry, is_retryable, retry_watch, get_delay,
+    RetryClient, retry, check_retryable, is_retryable, retry_watch, get_delay,
     passmethod, passproperty)
 from txzookeeper import retry as retry_module
 
@@ -58,8 +60,7 @@ class RetryCoreTests(ZookeeperTestCase):
 
         mock_client.original
         self.mocker.result(original)
-        mock_client.original
-        self.mocker.result(original)
+        self.mocker.count(2)
 
         mock_retry = self.mocker.mock()
         mock_retry.client
@@ -85,14 +86,105 @@ class RetryCoreTests(ZookeeperTestCase):
         prop = passproperty("abc")
         self.assertEqual(prop(mock_retry), 23)
 
+    @inlineCallbacks
     def test_retry(self):
-        pass
+        results = [fail(zookeeper.ConnectionLossException()),
+                   fail(zookeeper.ConnectionLossException()),
+                   succeed(21)]
+
+        class Foobar(object):
+            def original(self, zebra):
+                """Hello World"""
+                return results.pop(0)
+
+        self.patch(retry_module, "ZookeeperClient", Foobar)
+
+        retry_client = self.mocker.mock()
+
+        retry_client.session_timeout
+        self.mocker.result(5000)
+
+        retry_client.connected
+        self.mocker.result(True)
+        self.mocker.count(2)
+
+        retry_client.unrecoverable
+        self.mocker.result(False)
+        self.mocker.count(2)
+
+        retry_client.client
+        self.mocker.result(Foobar())
+
+        self.mocker.replay()
+
+        method = retry("original")
+        self.assertEqual(method.__name__, "original")
+        self.assertEqual(method.__doc__, "Hello World")
+        result = yield method(retry_client, "magic")
+        self.assertEqual(result, 21)
 
     def test_retry_watch(self):
-        pass
+        results = [(fail(zookeeper.ConnectionLossException(), Deferred())),
+                   (fail(zookeeper.ConnectionLossException(), Deferred())),
+                   (succeed(21), succeed(22))]
+
+        class Foobar(object):
+            def original(self, zebra):
+                """Hello World"""
+                return results.pop(0)
+
+        self.patch(retry_module, "ZookeeperClient", Foobar)
+
+        retry_client = self.mocker.mock()
+
+        retry_client.session_timeout
+        self.mocker.result(5000)
+
+        retry_client.connected
+        self.mocker.result(True)
+        self.mocker.count(2)
+
+        retry_client.unrecoverable
+        self.mocker.result(False)
+        self.mocker.count(2)
+
+        retry_client.client
+        self.mocker.result(Foobar())
+
+        self.mocker.replay()
+
+        method = retry_watch("original")
+        self.assertEqual(method.__name__, "original")
+        self.assertEqual(method.__doc__, "Hello World")
+        value_d, watch_d = method(retry_client, "magic")
+        self.assertEqual((yield value_d), 21)
+        self.assertEqual((yield watch_d), 21)
 
     def test_check_retryable(self):
-        pass
+        unrecoverable_errors = [
+            zookeeper.ApiErrorException(),
+            zookeeper.NoAuthException(),
+            zookeeper.NodeExistsException(),
+            zookeeper.SessionExpiredException(),
+            ]
+
+        class _Conn(object):
+            def __init__(self, **kw):
+                self.__dict__.update(kw)
+
+        error = zookeeper.ConnectionLossException()
+        conn = _Conn(connected=True, unrecoverable=False)
+        max_time = time.time() + 10
+
+        for e in unrecoverable_errors:
+            self.assertFalse(check_retryable(_Conn(), max_time, e))
+
+        self.assertTrue(check_retryable(conn, max_time, error))
+        self.assertFalse(check_retryable(conn, time.time() - 10, error))
+        self.assertFalse(check_retryable(
+            _Conn(connected=False, unrecoverable=False), max_time, error))
+        self.assertFalse(check_retryable(
+            _Conn(connected=True, unrecoverable=True), max_time, error))
 
     def test_get_delay(self):
         # Verify max value is respected
