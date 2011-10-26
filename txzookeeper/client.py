@@ -275,10 +275,10 @@ class ZookeeperClient(object):
             if self._session_event_callback:
                 self._session_event_callback(
                     self, ClientEvent(event_type, conn_state, path))
-            # We do propogate to watch deferreds, in one case in
+            # We do propagate to watch deferreds, in one case in
             # particular, namely if the session is expired, in which
             # case the watches are dead, and we send an appropriate
-            # error
+            # error.
             if conn_state == zookeeper.EXPIRED_SESSION_STATE:
                 error = zookeeper.SessionExpiredException("Session expired")
                 return watcher(None, None, None, error=error)

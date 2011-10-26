@@ -28,8 +28,9 @@ from twisted.internet.defer import inlineCallbacks, fail, succeed, Deferred
 
 from txzookeeper.client import ZookeeperClient
 from txzookeeper.retry import (
-    RetryClient, retry, check_retryable, is_retryable, retry_watch, get_delay,
-    passmethod, passproperty)
+    RetryClient, retry, retry_watch,
+    check_retryable, is_retryable, get_delay, sleep)
+
 from txzookeeper import retry as retry_module
 
 
@@ -52,83 +53,70 @@ class RetryCoreTests(ZookeeperTestCase):
         self.assertEqual(
             is_retryable(zookeeper.OperationTimeoutException()), True)
 
-    def test_passmethod(self):
+    def setup_always_retryable(self):
+        def check_retry(*args):
+            return True
 
-        def original(foobar):
-            """Hello World"""
-            return 21
-
-        mock_client = self.mocker.mock()
-        self.patch(retry_module, "ZookeeperClient", mock_client)
-
-        mock_client.original
-        self.mocker.result(original)
-        self.mocker.count(2)
-
-        mock_retry = self.mocker.mock()
-        mock_retry.client
-        self.mocker.result(mock_client)
-
-        self.mocker.replay()
-
-        method = passmethod("original")
-        self.assertEqual(method.__doc__, "Hello World")
-        self.assertEqual(method.__name__, "original")
-        self.assertEqual(method(mock_retry, "abc"), 21)
-
-    def test_passproperty(self):
-
-        mock_client = self.mocker.mock()
-        mock_client.abc
-        self.mocker.result(23)
-        mock_retry = self.mocker.mock()
-        mock_retry.client
-        self.mocker.result(mock_client)
-        self.mocker.replay()
-
-        prop = passproperty("abc")
-        self.assertEqual(prop(mock_retry), 23)
+        self.patch(retry_module, "check_retryable", check_retry)
 
     @inlineCallbacks
-    def test_retry(self):
+    def test_sleep(self):
+        t = time.time()
+        yield sleep(0.5)
+        self.assertTrue(time.time() - t > 0.5)
+
+    @inlineCallbacks
+    def test_retry_function(self):
+        """The retry wrapper can be used for a function."""
+        self.setup_always_retryable()
+
+        results = [fail(zookeeper.ConnectionLossException()),
+                   fail(zookeeper.ConnectionLossException()),
+                   succeed(21)]
+
+        def original(client, zebra):
+            """Hello World"""
+            return results.pop(0)
+
+        retry_func = retry(original)
+        self.assertEqual(retry_func.__name__, "original")
+        self.assertEqual(retry_func.__doc__, "Hello World")
+        result = yield retry_func(ZookeeperClient(), "magic")
+        self.assertEqual(result, 21)
+
+    @inlineCallbacks
+    def test_retry_method(self):
+        """The retry wrapper can be used for a method."""
+        self.setup_always_retryable()
+
         results = [fail(zookeeper.ConnectionLossException()),
                    fail(zookeeper.ConnectionLossException()),
                    succeed(21)]
 
         class Foobar(object):
+            def __init__(self, client):
+                self.client = client
+
             def original(self, zebra):
                 """Hello World"""
                 return results.pop(0)
 
-        self.patch(retry_module, "ZookeeperClient", Foobar)
+        client = ZookeeperClient()
+        foo = Foobar(client)
 
-        retry_client = self.mocker.mock()
+        method = retry(foo.original)
 
-        retry_client.session_timeout
-        self.mocker.result(5000)
-
-        retry_client.connected
-        self.mocker.result(True)
-        self.mocker.count(2)
-
-        retry_client.unrecoverable
-        self.mocker.result(False)
-        self.mocker.count(2)
-
-        retry_client.client
-        self.mocker.result(Foobar())
-
-        self.mocker.replay()
-
-        method = retry("original")
         self.assertEqual(method.__name__, "original")
         self.assertEqual(method.__doc__, "Hello World")
-        result = yield method(retry_client, "magic")
+        result = yield method(client, "magic")
         self.assertEqual(result, 21)
 
-    def test_retry_watch(self):
-        results = [(fail(zookeeper.ConnectionLossException(), Deferred())),
-                   (fail(zookeeper.ConnectionLossException(), Deferred())),
+    @inlineCallbacks
+    def test_retry_watch_method(self):
+        self.setup_always_retryable()
+
+        results = [(fail(zookeeper.ConnectionLossException()), Deferred()),
+                   (fail(zookeeper.ConnectionLossException()), Deferred()),
                    (succeed(21), succeed(22))]
 
         class Foobar(object):
@@ -136,32 +124,37 @@ class RetryCoreTests(ZookeeperTestCase):
                 """Hello World"""
                 return results.pop(0)
 
-        self.patch(retry_module, "ZookeeperClient", Foobar)
+        client = ZookeeperClient()
+        foo = Foobar()
 
-        retry_client = self.mocker.mock()
+        method = retry_watch(foo.original)
 
-        retry_client.session_timeout
-        self.mocker.result(5000)
-
-        retry_client.connected
-        self.mocker.result(True)
-        self.mocker.count(2)
-
-        retry_client.unrecoverable
-        self.mocker.result(False)
-        self.mocker.count(2)
-
-        retry_client.client
-        self.mocker.result(Foobar())
-
-        self.mocker.replay()
-
-        method = retry_watch("original")
         self.assertEqual(method.__name__, "original")
         self.assertEqual(method.__doc__, "Hello World")
-        value_d, watch_d = method(retry_client, "magic")
+        value_d, watch_d = method(client, "magic")
         self.assertEqual((yield value_d), 21)
-        self.assertEqual((yield watch_d), 21)
+        self.assertEqual((yield watch_d), 22)
+
+    @inlineCallbacks
+    def test_retry_watch_function(self):
+        self.setup_always_retryable()
+
+        results = [(fail(zookeeper.ConnectionLossException()), Deferred()),
+                   (fail(zookeeper.ConnectionLossException()), Deferred()),
+                   (succeed(21), succeed(22))]
+
+        def original(self, zebra):
+            """Hello World"""
+            return results.pop(0)
+
+        client = ZookeeperClient()
+        method = retry_watch(original)
+
+        self.assertEqual(method.__name__, "original")
+        self.assertEqual(method.__doc__, "Hello World")
+        value_d, watch_d = method(client, "magic")
+        self.assertEqual((yield value_d), 21)
+        self.assertEqual((yield watch_d), 22)
 
     def test_check_retryable(self):
         unrecoverable_errors = [
