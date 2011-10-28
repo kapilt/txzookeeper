@@ -126,6 +126,7 @@ def retry(client, func, *args, **kw):
     while 1:
         try:
             value = yield func(*args, **kw)
+
         except Exception, e:
             if not check_retryable(client, max_time, e):
                 raise
@@ -198,14 +199,6 @@ def retry_watch(client, func, *args, **kw):
     value_d.addErrback(retry_delay)
 
     return value_d, watch_d
-
-
-def _passmethod(method):
-    """Returns a method wrapper that directly invokes the client's method.
-    """
-    def wrapper(retry_client, *args, **kw):
-        return method(*args, **kw)
-    return functools.update_wrapper(wrapper, method)
 
 
 def _passproperty(name):
