@@ -32,6 +32,8 @@ import zookeeper
 
 from twisted.internet.defer import inlineCallbacks, returnValue, Deferred
 
+__all__ = ["retry", "RetryClient"]
+
 
 def is_retryable(e):
     """Determine if an exception signifies a recoverable connection error.
@@ -73,7 +75,11 @@ def get_delay(session_timeout, max_delay=5, session_fraction=30.0):
 
 
 def check_retryable(retry_client, max_time, error):
-    """Check if the operation is retryable.
+    """Check an error and a client to see if an operation is retryable.
+
+    :param retry_client: A txzookeeper client
+    :param max_time: The max time (epoch tick) that the op is retryable till.
+    :param error: The client operation exception.
     """
     # Only if the error is known.
     if not is_retryable(error):
@@ -94,129 +100,104 @@ def check_retryable(retry_client, max_time, error):
     return True
 
 
-def retry(func):
+@inlineCallbacks
+def retry(client, func, *args, **kw):
     """Constructs a retry wrapper around a function that retries invocations.
 
     If the function execution results in an exception due to a transient
     connection error, the retry wrapper will reinvoke the operation after
     a suitable delay (fractional value of the session timeout).
 
-    The first paramter of the wrapper is required to be the same
-    zookeeper client used by the parameter function.
-
-    :param func: A method or function that interacts with
-           zookeeper. If txzookeeper client must the first parameter
-           of this function. If its a method the zookeeper client
-           passed to the wrapper is not passed to the method. The
-           function must return a single value (either a deferred or
-           result value).
+    :param client: A ZookeeperClient instance.
+    :param func: A callable python object that interacts with
+           zookeeper, the callable must utilize the same zookeeper
+           connection as passed in the `client` param. The function
+           must return a single value (either a deferred or result
+           value).
     """
-    method = getattr(func, "im_func", None) and func or None
+    # For clients which aren't connected (session timeout == None)
+    # we raise the errors to the callers
+    session_timeout = client.session_timeout or 0
 
-    @inlineCallbacks
-    def wrapper(retry_client, *args, **kw):
-        # For clients which aren't connected (session timeout == None)
-        # we raise the errors to the callers
-        session_timeout = retry_client.session_timeout or 0
+    # If we keep retrying past the 1.5 * session timeout without
+    # success just die, the session expiry is fatal.
+    max_time = session_timeout * 1.5 + time.time()
 
-        # If we keep retrying past the 1.5 * session timeout without
-        # success just die, the session expiry is fatal.
-        max_time = session_timeout * 1.5 + time.time()
+    while 1:
+        try:
+            value = yield func(*args, **kw)
+        except Exception, e:
+            if not check_retryable(client, max_time, e):
+                raise
+            # Give the connection a chance to auto-heal.
+            yield sleep(get_delay(session_timeout))
+            continue
 
-        while 1:
-            try:
-                if method:
-                    value = yield method(*args, **kw)
-                else:
-                    value = yield func(retry_client, *args, **kw)
-            except Exception, e:
-                if not check_retryable(retry_client, max_time, e):
-                    raise
-                # Give the connection a chance to auto-heal.
-                yield sleep(get_delay(session_timeout))
-                continue
-
-            returnValue(value)
-
-    return functools.update_wrapper(wrapper, func)
+        returnValue(value)
 
 
-def retry_watch(func):
-    """Contructs a wrapper around a watch function that retries invocations.
+def retry_watch(client, func, *args, **kw):
+    """Contructs a wrapper around a watch callable that retries invocations.
 
-    If the function execution results in an exception due to a transient
+    If the callable execution results in an exception due to a transient
     connection error, the retry wrapper will reinvoke the operation after
     a suitable delay (fractional value of the session timeout).
 
     A watch function must return back a tuple of deferreds
     (value_deferred, watch_deferred). No inline callbacks are
-    performed in the wrapper to ensure that callers continue to see a
+    performed in here to ensure that callers continue to see a
     tuple of results.
 
-    The first paramter of the wrapper is required to be the same
-    zookeeper client used by the parameter function.
+    The client passed to this retry function must be the same as
+    the one utilized by the python callable.
 
-    :param func: A function that interacts with zookeeper. If a
+    :param client: A ZookeeperClient instance.
+    :param func: A python callable that interacts with zookeeper. If a
            function is passed, a txzookeeper client must the first
-           parameter of this function. If its a method the zookeeper
-           client passed to the wrapper is not passed to the
-           method. The function must return a tuple of
-           (value_deferred, watch_deferred)
+           parameter of this function. The function must return a
+           tuple of (value_deferred, watch_deferred)
     """
+    # For clients which aren't connected (session timeout == None)
+    # we raise the usage errors to the callers
+    session_timeout = client.session_timeout or 0
 
-    method = getattr(func, "im_func", None) and func or None
+    # If we keep retrying past the 1.5 * session timeout without
+    # success just die, the session expiry is fatal.
+    max_time = session_timeout * 1.5 + time.time()
+    value_d, watch_d = func(*args, **kw)
 
-    def wrapper(retry_client, *args, **kw):
-        # For clients which aren't connected (session timeout == None)
-        # we raise the usage errors to the callers
-        session_timeout = retry_client.session_timeout or 0
+    def retry_delay(f):
+        """Errback, verifes an op is retryable, and delays the next retry.
+        """
+        # Check that operation is retryable.
+        if not check_retryable(client, max_time, f.value):
+            return f
 
-        # If we keep retrying past the 1.5 * session timeout without
-        # success just die, the session expiry is fatal.
-        max_time = session_timeout * 1.5 + time.time()
+        # Give the connection a chance to auto-heal
+        d = sleep(get_delay(session_timeout))
+        d.addCallback(retry_inner)
+        return d
 
-        if method:
-            value_d, watch_d = method(*args, **kw)
-        else:
-            value_d, watch_d = func(retry_client, *args, **kw)
+    def retry_inner(value):
+        """Retry operation invoker.
+        """
+        # Invoke the function
+        retry_value_d, retry_watch_d = func(*args, **kw)
 
-        def retry_delay(f):
-            """Errback, verifes an op is retryable, and delays the next retry.
-            """
-            # Check that operation is retryable.
-            if not check_retryable(retry_client, max_time, f.value):
-                return f
+        # If we need to retry again.
+        retry_value_d.addErrback(retry_delay)
 
-            # Give the connection a chance to auto-heal
-            d = sleep(get_delay(session_timeout))
-            d.addCallback(retry_inner)
-            return d
+        # Chain the new watch deferred to the old, presuming its doa
+        # if the value deferred errored on a connection error.
+        retry_watch_d.chainDeferred(watch_d)
 
-        def retry_inner(value):
-            """Retry operation invoker.
-            """
-            # Invoke the method
-            if method:
-                retry_value_d, retry_watch_d = method(*args, **kw)
-            else:
-                retry_value_d, retry_watch_d = func(retry_client, *args, **kw)
+        # Insert back into the callback chain.
+        return retry_value_d
 
-            # If we need to retry again.
-            retry_value_d.addErrback(retry_delay)
+    # Attach the retry
+    value_d.addErrback(retry_delay)
 
-            # Chain the new watch deferred to the old, presuming its doa
-            # if the value deferred errored on a connection error.
-            retry_watch_d.chainDeferred(watch_d)
-
-            # Insert back into the callback chain.
-            return retry_value_d
-
-        # Attach the retry
-        value_d.addErrback(retry_delay)
-
-        return value_d, watch_d
-
-    return functools.update_wrapper(wrapper, func)
+    return value_d, watch_d
 
 
 def _passmethod(method):
@@ -266,42 +247,70 @@ class RetryClient(object):
 
     def __init__(self, client):
         self.client = client
-        self._initialize()
 
-    def _bind(self, name, factory):
-        method = getattr(self.client, name)
-        retry_func = factory(method)
-        retry_method = retry_func.__get__(self)
-        setattr(self, name, retry_method)
+    def add_auth(self, *args, **kw):
+        return retry(self.client, self.client.add_auth, *args, **kw)
 
-    def _initialize(self):
-        # async client methods returning deferreds
-        for i in ["add_auth",
-                  "create",
-                  "delete",
-                  "exists",
-                  "get",
-                  "get_acl",
-                  "get_children",
-                  "set_acl",
-                  "set",
-                  "sync"]:
-            self._bind(i, retry)
+    def create(self, *args, **kw):
+        return retry(self.client, self.client.create, *args, **kw)
 
-        # watch methods
-        for i in ["exists_and_watch",
-                  "get_and_watch",
-                  "get_children_and_watch"]:
-            self._bind(i, retry_watch)
+    def delete(self, *args, **kw):
+        return retry(self.client, self.client.delete, *args, **kw)
 
-        # pass through methods
-        for i in ["set_session_callback",
-                  "set_connection_error_callback",
-                  "set_determinstic_order",
-                  "set_connection_watcher",
-                  "close",
-                  "connect"]:
-            self._bind(i, _passmethod)
+    def exists(self, *args, **kw):
+        return retry(self.client, self.client.exists, *args, **kw)
+
+    def get(self, *args, **kw):
+        return retry(self.client, self.client.get, *args, **kw)
+
+    def get_acl(self, *args, **kw):
+        return retry(self.client, self.client.get_acl, *args, **kw)
+
+    def get_children(self, *args, **kw):
+        return retry(self.client, self.client.get_children, *args, **kw)
+
+    def set_acl(self, *args, **kw):
+        return retry(self.client, self.client.set_acl, *args, **kw)
+
+    def set(self, *args, **kw):
+        return retry(self.client, self.client.set, *args, **kw)
+
+    def sync(self, *args, **kw):
+        return retry(self.client, self.client.sync, *args, **kw)
+
+    # Watch retries
+
+    def exists_and_watch(self, *args, **kw):
+        return retry_watch(
+            self.client, self.client.exists_and_watch, *args, **kw)
+
+    def get_and_watch(self, *args, **kw):
+        return retry_watch(
+            self.client, self.client.get_and_watch, *args, **kw)
+
+    def get_children_and_watch(self, *args, **kw):
+        return retry_watch(
+            self.client, self.client.get_children_and_watch, *args, **kw)
+
+    # Passthrough methods
+
+    def set_connection_watcher(self, *args, **kw):
+        return self.client.set_connection_watcher(*args, **kw)
+
+    def set_connection_error_callback(self, *args, **kw):
+        return self.client.set_connection_error_callback(*args, **kw)
+
+    def set_session_callback(self, *args, **kw):
+        return self.client.set_session_callback(*args, **kw)
+
+    def set_determinstic_order(self, *args, **kw):
+        return self.client.set_determinstic_order(*args, **kw)
+
+    def close(self):
+        return self.client.close()
+
+    def connect(self, *args, **kw):
+        return self.client.connect(*args, **kw)
 
     # passthrough properties
     state = property(_passproperty("state"))
