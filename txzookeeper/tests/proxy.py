@@ -74,7 +74,7 @@ class ProxyFactory(portforward.ProxyFactory):
     protocol = ProxyServer
     instance = _blocked = False
 
-    def loose_connection(self):
+    def lose_connection(self):
         """Terminate both ends of the proxy connection."""
         if self.instance:
             self.instance.transport.loseConnection()

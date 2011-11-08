@@ -60,7 +60,7 @@ class WatchDeliveryConnectionFailedTest(ZookeeperTestCase):
             yield self.direct_client.connect()
         utils.deleteTree(handle=self.direct_client.handle)
         yield self.direct_client.close()
-        self.proxy.loose_connection()
+        self.proxy.lose_connection()
         yield self.proxy_port.stopListening()
 
     @inlineCallbacks
@@ -77,7 +77,7 @@ class WatchDeliveryConnectionFailedTest(ZookeeperTestCase):
         self.assertEqual((yield child_d), [])
 
         # Kill the connection and fire the watch
-        self.proxy.loose_connection()
+        self.proxy.lose_connection()
         yield self.direct_client.create(
             cpath + "/abc", flags=zookeeper.SEQUENCE)
 
@@ -98,7 +98,7 @@ class WatchDeliveryConnectionFailedTest(ZookeeperTestCase):
         self.assertEqual((yield exists_d), None)
 
         # Kill the connection and fire the watch
-        self.proxy.loose_connection()
+        self.proxy.lose_connection()
         yield self.direct_client.create(cpath)
 
         # We should still get the exists event.
@@ -120,7 +120,7 @@ class WatchDeliveryConnectionFailedTest(ZookeeperTestCase):
         self.assertEqual(content, "abc")
 
         # Kill the connection and fire the watch
-        self.proxy.loose_connection()
+        self.proxy.lose_connection()
         yield self.direct_client.set(cpath, "xyz")
 
         # We should still get the exists event.
@@ -148,7 +148,7 @@ class WatchDeliveryConnectionFailedTest(ZookeeperTestCase):
         self.proxy.set_blocked(True)
         yield self.direct_client.create(cpath)
         self.proxy.set_blocked(False)
-        self.proxy.loose_connection()
+        self.proxy.lose_connection()
 
         # We should still get the exists event.
         yield watch_d
@@ -168,7 +168,7 @@ class WatchDeliveryConnectionFailedTest(ZookeeperTestCase):
         yield self.sleep(15)
         # Unblock the proxy for next connect, and then drop the connection.
         self.proxy.set_blocked(False)
-        self.proxy.loose_connection()
+        self.proxy.lose_connection()
         # Wait for a reconnect (see below why we can't just use a watch here)
         yield self.sleep(2)
         yield self.assertFailure(
@@ -192,7 +192,7 @@ class WatchDeliveryConnectionFailedTest(ZookeeperTestCase):
         yield self.sleep(15)
         # Unblock the proxy for next connect, and then drop the connection.
         self.proxy.set_blocked(False)
-        self.proxy.loose_connection()
+        self.proxy.lose_connection()
         # Wait for a reconnect
         yield self.assertFailure(watch_d, zookeeper.SessionExpiredException)
         # Leads to bindings bug failure

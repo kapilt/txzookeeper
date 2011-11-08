@@ -207,7 +207,7 @@ class RetryClientConnectionLossTest(ZookeeperTestCase):
             yield self.direct_client.connect()
         utils.deleteTree(handle=self.direct_client.handle)
         yield self.direct_client.close()
-        self.proxy.loose_connection()
+        self.proxy.lose_connection()
         yield self.proxy_port.stopListening()
 
     @inlineCallbacks
@@ -224,7 +224,7 @@ class RetryClientConnectionLossTest(ZookeeperTestCase):
 
         # Unblock and disconnect
         self.proxy.set_blocked(False)
-        self.proxy.loose_connection()
+        self.proxy.lose_connection()
 
         # Call goes through
         self.assertEqual((yield child_d), [])
@@ -253,7 +253,7 @@ class RetryClientConnectionLossTest(ZookeeperTestCase):
 
         # Unblock and disconnect
         self.proxy.set_blocked(False)
-        self.proxy.loose_connection()
+        self.proxy.lose_connection()
 
         # Call gets retried, see the latest state
         self.assertTrue((yield exists_d))
@@ -281,7 +281,7 @@ class RetryClientConnectionLossTest(ZookeeperTestCase):
 
         # Unblock and disconnect
         self.proxy.set_blocked(False)
-        self.proxy.loose_connection()
+        self.proxy.lose_connection()
 
         # Call goes through
         content, stat = yield get_d
@@ -316,7 +316,7 @@ class RetryClientConnectionLossTest(ZookeeperTestCase):
 
         # Unblock and disconnect
         self.proxy.set_blocked(False)
-        self.proxy.loose_connection()
+        self.proxy.lose_connection()
 
         # Call goes through, contents verified.
         yield mod_d
