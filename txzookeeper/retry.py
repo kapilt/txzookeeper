@@ -25,7 +25,6 @@ A retry client facade that transparently handles transient connection
 errors.
 """
 
-import functools
 import time
 
 import zookeeper
@@ -68,10 +67,7 @@ def get_delay(session_timeout, max_delay=5, session_fraction=30.0):
     :param session_fraction: The fractinoal amount of a timeout to wait
     """
     retry_delay = session_timeout / (float(session_fraction) * 1000)
-    if retry_delay > max_delay:
-        return max_delay
-
-    return retry_delay
+    return min(retry_delay, max_delay)
 
 
 def check_retryable(retry_client, max_time, error):
@@ -126,7 +122,6 @@ def retry(client, func, *args, **kw):
     while 1:
         try:
             value = yield func(*args, **kw)
-
         except Exception, e:
             if not check_retryable(client, max_time, e):
                 raise
@@ -206,7 +201,7 @@ def _passproperty(name):
     """
     def wrapper(retry_client):
         return getattr(retry_client.client, name)
-    return wrapper
+    return property(wrapper)
 
 
 class RetryClient(object):
@@ -306,10 +301,10 @@ class RetryClient(object):
         return self.client.connect(*args, **kw)
 
     # passthrough properties
-    state = property(_passproperty("state"))
-    client_id = property(_passproperty("client_id"))
-    session_timeout = property(_passproperty("session_timeout"))
-    servers = property(_passproperty("servers"))
-    handle = property(_passproperty("handle"))
-    connected = property(_passproperty("connected"))
-    unrecoverable = property(_passproperty("unrecoverable"))
+    state = _passproperty("state")
+    client_id = _passproperty("client_id")
+    session_timeout = _passproperty("session_timeout")
+    servers = _passproperty("servers")
+    handle = _passproperty("handle")
+    connected = _passproperty("connected")
+    unrecoverable = _passproperty("unrecoverable")

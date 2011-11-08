@@ -53,6 +53,8 @@ class RetryCoreTests(ZookeeperTestCase):
             is_retryable(zookeeper.ConnectionLossException()), True)
         self.assertEqual(
             is_retryable(zookeeper.OperationTimeoutException()), True)
+        self.assertEqual(
+            is_retryable(TypeError()), False)
 
     def setup_always_retryable(self):
         def check_retry(*args):
@@ -67,7 +69,7 @@ class RetryCoreTests(ZookeeperTestCase):
         self.assertTrue(time.time() - t > 0.5)
 
     @inlineCallbacks
-    def xtest_retry_function(self):
+    def test_retry_function(self):
         """The retry wrapper can be used for a function."""
         self.setup_always_retryable()
 
@@ -75,7 +77,7 @@ class RetryCoreTests(ZookeeperTestCase):
                    fail(zookeeper.ConnectionLossException()),
                    succeed(21)]
 
-        def original(client, zebra):
+        def original(zebra):
             """Hello World"""
             return results.pop(0)
 
