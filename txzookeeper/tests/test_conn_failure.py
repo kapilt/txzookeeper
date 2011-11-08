@@ -63,6 +63,12 @@ class WatchDeliveryConnectionFailedTest(ZookeeperTestCase):
         self.proxy.lose_connection()
         yield self.proxy_port.stopListening()
 
+    def verify_events(self, events, expected):
+        """Verify the state of the session events encountered.
+        """
+        for value, state in zip([e.state_name for e in events], expected):
+            self.assertEqual(value, state)
+
     @inlineCallbacks
     def test_child_watch_fires_upon_reconnect(self):
         yield self.proxied_client.connect()
@@ -86,6 +92,9 @@ class WatchDeliveryConnectionFailedTest(ZookeeperTestCase):
 
         # We get two pairs of (connecting, connected) for the conn and watch
         self.assertEqual(len(self.session_events), 4)
+        self.verify_events(
+            self.session_events,
+            ("connecting", "connecting", "connected", "connected"))
 
     @inlineCallbacks
     def test_exists_watch_fires_upon_reconnect(self):
@@ -106,6 +115,9 @@ class WatchDeliveryConnectionFailedTest(ZookeeperTestCase):
 
         # We get two pairs of (connecting, connected) for the conn and watch
         self.assertEqual(len(self.session_events), 4)
+        self.verify_events(
+            self.session_events,
+            ("connecting", "connecting", "connected", "connected"))
 
     @inlineCallbacks
     def test_get_watch_fires_upon_reconnect(self):
@@ -128,6 +140,9 @@ class WatchDeliveryConnectionFailedTest(ZookeeperTestCase):
 
         # We also two pairs of (connecting, connected) for the conn and watch
         self.assertEqual(len(self.session_events), 4)
+        self.verify_events(
+            self.session_events,
+            ("connecting", "connecting", "connected", "connected"))
 
     @inlineCallbacks
     def test_watch_delivery_failure_resends(self):
