@@ -35,7 +35,9 @@ from txzookeeper.tests import ZookeeperTestCase
 
 
 ZK_HOME = os.environ.get("ZOOKEEPER_PATH")
-assert ZK_HOME, "ZOOKEEPER_PATH environment variable must be defined"
+assert ZK_HOME, (
+    "ZOOKEEPER_PATH environment variable must be defined.\n "
+    "For deb package installations this is /usr/share/java")
 
 CLUSTER = ZookeeperCluster(ZK_HOME)
 atexit.register(lambda cluster: cluster.terminate(), CLUSTER)
