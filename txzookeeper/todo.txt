@@ -1,10 +1,2 @@
 
-bugs to file upstream
-
- - you can set acl on a non existant node.
- - memory leak every api invocation. [really? need some measurements here]
-
- observed while trying xtest_get_children_with_watcher
-
- - segfault if close during completion.
- - getting a watch notification when closing a connection, segfaults.
+Documentation

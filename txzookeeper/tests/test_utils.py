@@ -1,7 +1,10 @@
 #
-#  Copyright (C) 2010 Canonical Ltd. All Rights Reserved
+#  Copyright (C) 2010-2011 Canonical Ltd. All Rights Reserved
 #
 #  This file is part of txzookeeper.
+#
+#  Authors:
+#   Kapil Thangavelu
 #
 #  txzookeeper is free software: you can redistribute it and/or modify
 #  it under the terms of the GNU Lesser General Public License as published by
