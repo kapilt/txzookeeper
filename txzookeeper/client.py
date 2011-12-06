@@ -377,13 +377,18 @@ class ZookeeperClient(object):
         @param force: boolean, require the connection to be closed now or
                       an exception be raised.
         """
-        if not self.connected:
+        self.connected = False
+
+        if not self.handle:
             return
 
-        result = zookeeper.close(self.handle)
-        self.connected = False
-        d = defer.Deferred()
+        try:
+            result = zookeeper.close(self.handle)
+        except zookeeper.ZooKeeperException:
+            self.handle = None
+            return
 
+        d = defer.Deferred()
         if self._check_result(result, d):
             return d
         d.callback(True)
