@@ -58,6 +58,6 @@ setup(
         "Intended Audience :: Information Technology",
         "Programming Language :: Python",
         "Topic :: Database",
-        "License :: OSI Approved :: MIT License",
+        "License :: OSI Approved :: GNU Library or Lesser General Public License (LGPL)"
        ],
     )
