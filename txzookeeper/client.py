@@ -1,7 +1,10 @@
 #
-#  Copyright (C) 2010, 2011 Canonical Ltd. All Rights Reserved
+#  Copyright (C) 2010-2011 Canonical Ltd. All Rights Reserved
 #
 #  This file is part of txzookeeper.
+#
+#  Authors:
+#   Kapil Thangavelu
 #
 #  txzookeeper is free software: you can redistribute it and/or modify
 #  it under the terms of the GNU Lesser General Public License as published by
@@ -191,8 +194,6 @@ class ZookeeperClient(object):
             error = error_class(error_msg)
 
             if is_connection_exception(error):
-                # Mark the client as disconnected.
-                self.connected = False
                 # Route connection errors to a connection level error
                 # handler if specified.
                 if self._connection_error_callback:
@@ -276,6 +277,13 @@ class ZookeeperClient(object):
             if self._session_event_callback:
                 self._session_event_callback(
                     self, ClientEvent(event_type, conn_state, path))
+            # We do propagate to watch deferreds, in one case in
+            # particular, namely if the session is expired, in which
+            # case the watches are dead, and we send an appropriate
+            # error.
+            if conn_state == zookeeper.EXPIRED_SESSION_STATE:
+                error = zookeeper.SessionExpiredException("Session expired")
+                return watcher(None, None, None, error=error)
         else:
             return watcher(event_type, conn_state, path)
 
@@ -300,7 +308,8 @@ class ZookeeperClient(object):
     @property
     def session_timeout(self):
         """
-        What's the negotiated session timeout for this connection, in seconds.
+        The negotiated session timeout for this connection, in milliseconds.
+
         If the client is not connected the value is None.
         """
         if self.connected:
@@ -370,13 +379,18 @@ class ZookeeperClient(object):
         @param force: boolean, require the connection to be closed now or
                       an exception be raised.
         """
-        if not self.connected:
+        self.connected = False
+
+        if not self.handle:
             return
 
-        result = zookeeper.close(self.handle)
-        self.connected = False
-        d = defer.Deferred()
+        try:
+            result = zookeeper.close(self.handle)
+        except zookeeper.ZooKeeperException:
+            self.handle = None
+            return
 
+        d = defer.Deferred()
         if self._check_result(result, d):
             return d
         d.callback(True)
@@ -533,8 +547,11 @@ class ZookeeperClient(object):
         """
         d = defer.Deferred()
 
-        def watcher(*args):
-            d.callback(ClientEvent(*args))
+        def watcher(event_type, conn_state, path, error=None):
+            if error:
+                d.errback(error)
+            else:
+                d.callback(ClientEvent(event_type, conn_state, path))
         return self._exists(path, watcher), d
 
     def get(self, path):
@@ -558,8 +575,11 @@ class ZookeeperClient(object):
         """
         d = defer.Deferred()
 
-        def watcher(*args):
-            d.callback(ClientEvent(*args))
+        def watcher(event_type, conn_state, path, error=None):
+            if error:
+                d.errback(error)
+            else:
+                d.callback(ClientEvent(event_type, conn_state, path))
         return self._get(path, watcher), d
 
     def get_children(self, path):
@@ -582,8 +602,11 @@ class ZookeeperClient(object):
         """
         d = defer.Deferred()
 
-        def watcher(*args):
-            d.callback(ClientEvent(*args))
+        def watcher(event_type, conn_state, path, error=None):
+            if error:
+                d.errback(error)
+            else:
+                d.callback(ClientEvent(event_type, conn_state, path))
         return self._get_children(path, watcher), d
 
     def get_acl(self, path):

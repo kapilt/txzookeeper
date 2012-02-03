@@ -1,7 +1,10 @@
 #
-#  Copyright (C) 2010, 2011 Canonical Ltd. All Rights Reserved
+#  Copyright (C) 2010-2011 Canonical Ltd. All Rights Reserved
 #
 #  This file is part of txzookeeper.
+#
+#  Authors:
+#   Kapil Thangavelu
 #
 #  txzookeeper is free software: you can redistribute it and/or modify
 #  it under the terms of the GNU Lesser General Public License as published by
@@ -22,4 +25,4 @@ from client import ZookeeperClient
 __all__ = ["ZookeeperClient"]
 
 # Remember to update debian/changelog as well, for the daily build.
-version = "0.8.0"
+version = "0.9.0"

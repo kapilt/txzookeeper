@@ -3,6 +3,9 @@
 #
 #  This file is part of txzookeeper.
 #
+#  Authors:
+#   Kapil Thangavelu
+#
 #  txzookeeper is free software: you can redistribute it and/or modify
 #  it under the terms of the GNU Lesser General Public License as published by
 #  the Free Software Foundation, either version 3 of the License, or
@@ -55,6 +58,6 @@ setup(
         "Intended Audience :: Information Technology",
         "Programming Language :: Python",
         "Topic :: Database",
-        "License :: OSI Approved :: MIT License",
+        "License :: OSI Approved :: GNU Library or Lesser General Public License (LGPL)"
        ],
     )

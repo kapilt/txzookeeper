@@ -1,7 +1,10 @@
 #
-#  Copyright (C) 2010, 2011 Canonical Ltd. All Rights Reserved
+#  Copyright (C) 2010-2011, 2011 Canonical Ltd. All Rights Reserved
 #
 #  This file is part of txzookeeper.
+#
+#  Authors:
+#   Kapil Thangavelu
 #
 #  txzookeeper is free software: you can redistribute it and/or modify
 #  it under the terms of the GNU Lesser General Public License as published by
@@ -506,7 +509,7 @@ class ClientTests(ZookeeperTestCase):
 
         def check_exists(path):
             exists, watch = self.client.exists_and_watch(
-                "%s/wooly-mammoth"%node_path)
+                "%s/wooly-mammoth" % node_path)
             watch.chainDeferred(watcher_deferred)
             return exists
 
@@ -517,13 +520,14 @@ class ClientTests(ZookeeperTestCase):
 
         def create_node(client):
             self.assertEqual(client.connected, True)
-            return self.client2.create("%s/wooly-mammoth"%node_path, "extinct")
+            return self.client2.create(
+                "%s/wooly-mammoth" % node_path, "extinct")
 
         def shim(path):
             return watcher_deferred
 
         def verify_watch(event):
-            self.assertEqual(event.path, "%s/wooly-mammoth"%node_path)
+            self.assertEqual(event.path, "%s/wooly-mammoth" % node_path)
             self.assertEqual(event.type, zookeeper.CREATED_EVENT)
 
         d.addCallback(create_container)
@@ -1080,60 +1084,6 @@ class ClientTests(ZookeeperTestCase):
 
         d.addCallback(set_invalid_watcher)
         d.addErrback(verify_invalid)
-        return d
-
-    def xtest_session_expired_event(self):
-        """
-        A client session can be reattached to in a separate connection,
-        if the a session is expired, using the zookeeper connection will
-        raise a SessionExpiredException.
-        """
-        d = self.client.connect()
-
-        class StopTest(Exception):
-            pass
-
-        def new_connection_same_connection(client):
-            self.assertEqual(client.state, zookeeper.CONNECTED_STATE)
-            return ZookeeperClient("127.0.0.1:2181").connect(
-                client_id=client.client_id).addErrback(
-                guard_session_expired, client)
-
-        def guard_session_expired(failure, client):
-            # On occassion we get a session expired event while connecting.
-            failure.trap(ConnectionException)
-            self.assertEqual(failure.value.state_name, "expired")
-            # Stop the test from proceeding
-            raise StopTest()
-
-        def close_new_connection(client):
-            # Verify both connections are using same session
-            self.assertEqual(self.client.client_id, client.client_id)
-            self.assertEqual(client.state, zookeeper.CONNECTED_STATE)
-
-            # Closing one connection will close the session
-            client.close()
-
-            # Continued use of the other client will get a
-            # disconnect exception.
-            return self.client.exists("/")
-
-        def verify_original_closed(failure):
-            if not isinstance(failure, Failure):
-                self.fail("Test did not raise exception.")
-            failure.trap(
-                zookeeper.SessionExpiredException,
-                zookeeper.ConnectionLossException)
-
-            #print "client close"
-            self.client.close()
-            #print "creating new client for teardown"
-            return self.client.connect()
-
-        d.addCallback(new_connection_same_connection)
-        d.addCallback(close_new_connection)
-        d.addBoth(verify_original_closed)
-
         return d
 
     def test_connect_with_server(self):

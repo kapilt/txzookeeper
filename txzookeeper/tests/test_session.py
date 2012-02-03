@@ -1,10 +1,30 @@
+#
+#  Copyright (C) 2010-2011 Canonical Ltd. All Rights Reserved
+#
+#  This file is part of txzookeeper.
+#
+#  Authors:
+#   Kapil Thangavelu
+#
+#  txzookeeper is free software: you can redistribute it and/or modify
+#  it under the terms of the GNU Lesser General Public License as published by
+#  the Free Software Foundation, either version 3 of the License, or
+#  (at your option) any later version.
+#
+#  txzookeeper is distributed in the hope that it will be useful,
+#  but WITHOUT ANY WARRANTY; without even the implied warranty of
+#  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+#  GNU Lesser General Public License for more details.
+#
+#  You should have received a copy of the GNU Lesser General Public License
+#  along with txzookeeper.  If not, see <http://www.gnu.org/licenses/>.
+#
 
 import atexit
 import os
 
 import zookeeper
 
-from twisted.internet import reactor
 from twisted.internet.defer import inlineCallbacks, Deferred, returnValue
 
 from txzookeeper import ZookeeperClient
@@ -15,7 +35,9 @@ from txzookeeper.tests import ZookeeperTestCase
 
 
 ZK_HOME = os.environ.get("ZOOKEEPER_PATH")
-assert ZK_HOME, "ZOOKEEPER_PATH environment variable must be defined"
+assert ZK_HOME, (
+    "ZOOKEEPER_PATH environment variable must be defined.\n "
+    "For deb package installations this is /usr/share/java")
 
 CLUSTER = ZookeeperCluster(ZK_HOME)
 atexit.register(lambda cluster: cluster.terminate(), CLUSTER)
@@ -30,12 +52,6 @@ class ClientSessionTests(ZookeeperTestCase):
         self.client2 = None
         zookeeper.deterministic_conn_order(True)
         zookeeper.set_debug_level(0)
-
-    def sleep(self, delay):
-        """Non-blocking sleep."""
-        deferred = Deferred()
-        reactor.callLater(delay, deferred.callback, None)
-        return deferred
 
     @property
     def cluster(self):
@@ -122,7 +138,14 @@ class ClientSessionTests(ZookeeperTestCase):
         """
         @inlineCallbacks
         def connection_error_handler(connection, error):
+            # Moved management of this connection attribute out of the
+            # default behavior for a connection exception, to support
+            # the retry facade. Under the hood libzk is going to be
+            # trying to transparently reconnect
+            connection.connected = False
+
             # On loss of the connection, reconnect the client w/ same session.
+
             yield connection.connect(
                 self.cluster[1].address, client_id=connection.client_id)
             returnValue(23)
@@ -157,7 +180,7 @@ class ClientSessionTests(ZookeeperTestCase):
 
         def session_event_callback(connection, e):
             session_events.append(e)
-            if len(session_events) == 4:
+            if len(session_events) == 8:
                 events_received.callback(True)
 
         # Connect to a node in the cluster and establish a watch
@@ -165,8 +188,15 @@ class ClientSessionTests(ZookeeperTestCase):
         self.client.set_session_callback(session_event_callback)
         yield self.client.connect()
 
-        child_d, watch_d = self.client.get_children_and_watch("/")
-        yield child_d
+        # Setup some watches to verify they are cleaned out on expiration.
+        d, e_watch_d = self.client.exists_and_watch("/")
+        yield d
+
+        d, g_watch_d = self.client.get_and_watch("/")
+        yield d
+
+        d, c_watch_d = self.client.get_children_and_watch("/")
+        yield d
 
         # Connect a client to the same session on a different node.
         self.client2 = ZookeeperClient(self.cluster[0].address)
@@ -177,8 +207,10 @@ class ClientSessionTests(ZookeeperTestCase):
 
         # It can take some time for this to propagate
         yield events_received
-        self.assertEqual(len(session_events), 4)
-        self.assertEqual(session_events[-1].state_name, "expired")
+        self.assertEqual(len(session_events), 8)
+        # The last four (conn + 3 watches) are all expired
+        for evt in session_events[4:]:
+            self.assertEqual(evt.state_name, "expired")
 
         # The connection is dead without reconnecting.
         yield self.assertFailure(
@@ -186,6 +218,9 @@ class ClientSessionTests(ZookeeperTestCase):
             NotConnectedException, ConnectionException)
 
         self.assertTrue(self.client.unrecoverable)
+        yield self.assertFailure(e_watch_d, zookeeper.SessionExpiredException)
+        yield self.assertFailure(g_watch_d, zookeeper.SessionExpiredException)
+        yield self.assertFailure(c_watch_d, zookeeper.SessionExpiredException)
 
         # If a reconnect attempt is made with a dead session id
         #yield self.client.connect(client_id=self.client.client_id)
