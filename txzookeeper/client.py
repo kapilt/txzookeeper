@@ -742,7 +742,7 @@ class ZookeeperClient(object):
             raise TypeError("Invalid callback %r" % callback)
         self._connection_error_callback = callback
 
-    def set_determinstic_order(self, boolean):
+    def set_deterministic_order(self, boolean):
         """
         The zookeeper client will by default randomize the server hosts
         it will connect to unless this is set to True.
