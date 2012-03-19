@@ -1,5 +1,5 @@
 #
-#  Copyright (C) 2010-2011 Canonical Ltd. All Rights Reserved
+#  Copyright (C) 2010-2012 Canonical Ltd. All Rights Reserved
 #
 #  This file is part of txzookeeper.
 #
@@ -81,7 +81,7 @@ class RetryCoreTests(ZookeeperTestCase):
             """Hello World"""
             return results.pop(0)
 
-        result = yield retry(ZookeeperClient(), original, "magic")
+        result = yield retry(ZookeeperClient(), original, None, "magic")
         self.assertEqual(result, 21)
 
     @inlineCallbacks
@@ -101,7 +101,7 @@ class RetryCoreTests(ZookeeperTestCase):
 
         client = ZookeeperClient()
         foo = Foobar()
-        result = yield retry(client, foo.original, "magic")
+        result = yield retry(client, foo.original, None, "magic")
         self.assertEqual(result, 21)
 
     @inlineCallbacks
@@ -117,7 +117,7 @@ class RetryCoreTests(ZookeeperTestCase):
             return results.pop(0)
 
         client = ZookeeperClient()
-        value_d, watch_d = retry_watch(client, original, "magic")
+        value_d, watch_d = retry_watch(client, original, None, "magic")
         self.assertEqual((yield value_d), 21)
         self.assertEqual((yield watch_d), 22)
 
