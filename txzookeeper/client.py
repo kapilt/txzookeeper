@@ -285,14 +285,19 @@ class ZookeeperClient(object):
         else:
             return watcher(event_type, conn_state, path)
 
-    def _zk_thread_callback(self, func):
+    def _zk_thread_callback(self, func, *f_args, **f_kw):
         """
         The client library invokes callbacks in a separate thread, we wrap
         any user defined callback so that they are called back in the main
         thread after, zookeeper calls the wrapper.
         """
+        f_args = list(f_args)
+
         def wrapper(handle, *args):  # pragma: no cover
-            reactor.callFromThread(func, *args)
+            cb_args = list(f_args)  # due to multiple invocation, make a copy
+            cb_args.extend(args)
+#            print "CALLB", len(cb_args), cb_args, len(f_kw), f_kw
+            reactor.callFromThread(func, *cb_args, **f_kw)
         return wrapper
 
     @property
@@ -488,16 +493,16 @@ class ZookeeperClient(object):
         if self._check_connected(d):
             return d
 
-        def _cb_created(result_code, path):
-            if self._check_result(result_code, d):
-                return
-            d.callback(path)
-
-        callback = self._zk_thread_callback(_cb_created)
+        callback = self._zk_thread_callback(self._cb_created, d)
         result = zookeeper.acreate(
             self.handle, path, data, acls, flags, callback)
         self._check_result(result, d)
         return d
+
+    def _cb_created(self, d, result_code, path):
+        if self._check_result(result_code, d):
+            return
+        d.callback(path)
 
     def delete(self, path, version=-1):
         """
@@ -513,15 +518,15 @@ class ZookeeperClient(object):
         if self._check_connected(d):
             return d
 
-        def _cb_delete(result_code):
-            if self._check_result(result_code, d):
-                return
-            d.callback(result_code)
-
-        callback = self._zk_thread_callback(_cb_delete)
+        callback = self._zk_thread_callback(self._cb_delete, d)
         result = zookeeper.adelete(self.handle, path, version, callback)
         self._check_result(result, d)
         return d
+
+    def _cb_delete(self, d, result_code):
+        if self._check_result(result_code, d):
+            return
+        d.callback(result_code)
 
     def exists(self, path):
         """
@@ -601,10 +606,12 @@ class ZookeeperClient(object):
         d = defer.Deferred()
 
         def watcher(event_type, conn_state, path, error=None):
+            #print "WATCH FIRES"
             if error:
                 d.errback(error)
             else:
                 d.callback(ClientEvent(event_type, conn_state, path))
+        #print "GETCW"
         return self._get_children(path, watcher), d
 
     def get_acl(self, path):
@@ -657,16 +664,16 @@ class ZookeeperClient(object):
         if self._check_connected(d):
             return d
 
-        def _cb_set_acl(result_code):
-            if self._check_result(result_code, d):
-                return
-            d.callback(result_code)
-
-        callback = self._zk_thread_callback(_cb_set_acl)
+        callback = self._zk_thread_callback(self._cb_set_acl, d)
         result = zookeeper.aset_acl(
             self.handle, path, version, acls, callback)
         self._check_result(result, d)
         return d
+
+    def _cb_set_acl(self, d, result_code):
+        if self._check_result(result_code, d):
+            return
+        d.callback(result_code)
 
     def set(self, path, data="", version=-1):
         """
@@ -683,15 +690,15 @@ class ZookeeperClient(object):
         if self._check_connected(d):
             return d
 
-        def _cb_set(result_code, node_stat):
-            if self._check_result(result_code, d):
-                return
-            d.callback(node_stat)
-
-        callback = self._zk_thread_callback(_cb_set)
+        callback = self._zk_thread_callback(self._cb_set, d)
         result = zookeeper.aset(self.handle, path, data, version, callback)
         self._check_result(result, d)
         return d
+
+    def _cb_set(self, d, result_code, node_stat):
+        if self._check_result(result_code, d):
+            return
+        d.callback(node_stat)
 
     def set_connection_watcher(self, watcher):
         """
