@@ -218,7 +218,7 @@ class ZookeeperClient(object):
             d.callback((value, stat))
 
         callback = self._zk_thread_callback(_cb_get)
-        watcher = self._wrap_watcher(watcher)
+        watcher = self._wrap_watcher(watcher, "get", path)
         result = zookeeper.aget(self.handle, path, watcher, callback)
         self._check_result(result, d)
         return d
@@ -234,7 +234,7 @@ class ZookeeperClient(object):
             d.callback(children)
 
         callback = self._zk_thread_callback(_cb_get_children)
-        watcher = self._wrap_watcher(watcher)
+        watcher = self._wrap_watcher(watcher, "child", path)
         result = zookeeper.aget_children(self.handle, path, watcher, callback)
         self._check_result(result, d)
         return d
@@ -251,12 +251,12 @@ class ZookeeperClient(object):
             d.callback(stat)
 
         callback = self._zk_thread_callback(_cb_exists)
-        watcher = self._wrap_watcher(watcher)
+        watcher = self._wrap_watcher(watcher, "exists", path)
         result = zookeeper.aexists(self.handle, path, watcher, callback)
         self._check_result(result, d)
         return d
 
-    def _wrap_watcher(self, watcher):
+    def _wrap_watcher(self, watcher, watch_type, path):
         if watcher is None:
             return watcher
         if not callable(watcher):
@@ -294,9 +294,9 @@ class ZookeeperClient(object):
         f_args = list(f_args)
 
         def wrapper(handle, *args):  # pragma: no cover
-            cb_args = list(f_args)  # due to multiple invocation, make a copy
+            # make a copy the conn watch callback gets invoked multiple times
+            cb_args = list(f_args)
             cb_args.extend(args)
-#            print "CALLB", len(cb_args), cb_args, len(f_kw), f_kw
             reactor.callFromThread(func, *cb_args, **f_kw)
         return wrapper
 
@@ -493,13 +493,14 @@ class ZookeeperClient(object):
         if self._check_connected(d):
             return d
 
-        callback = self._zk_thread_callback(self._cb_created, d)
+        callback = self._zk_thread_callback(
+            self._cb_created, d, data, acls, flags)
         result = zookeeper.acreate(
             self.handle, path, data, acls, flags, callback)
         self._check_result(result, d)
         return d
 
-    def _cb_created(self, d, result_code, path):
+    def _cb_created(self, d, data, acls, flags, result_code, path):
         if self._check_result(result_code, d):
             return
         d.callback(path)
@@ -606,12 +607,10 @@ class ZookeeperClient(object):
         d = defer.Deferred()
 
         def watcher(event_type, conn_state, path, error=None):
-            #print "WATCH FIRES"
             if error:
                 d.errback(error)
             else:
                 d.callback(ClientEvent(event_type, conn_state, path))
-        #print "GETCW"
         return self._get_children(path, watcher), d
 
     def get_acl(self, path):
@@ -664,13 +663,13 @@ class ZookeeperClient(object):
         if self._check_connected(d):
             return d
 
-        callback = self._zk_thread_callback(self._cb_set_acl, d)
+        callback = self._zk_thread_callback(self._cb_set_acl, d, path, acls)
         result = zookeeper.aset_acl(
             self.handle, path, version, acls, callback)
         self._check_result(result, d)
         return d
 
-    def _cb_set_acl(self, d, result_code):
+    def _cb_set_acl(self, d, path, acls, result_code):
         if self._check_result(result_code, d):
             return
         d.callback(result_code)
@@ -690,12 +689,12 @@ class ZookeeperClient(object):
         if self._check_connected(d):
             return d
 
-        callback = self._zk_thread_callback(self._cb_set, d)
+        callback = self._zk_thread_callback(self._cb_set, d, path, data)
         result = zookeeper.aset(self.handle, path, data, version, callback)
         self._check_result(result, d)
         return d
 
-    def _cb_set(self, d, result_code, node_stat):
+    def _cb_set(self, d, path, data, result_code, node_stat):
         if self._check_result(result_code, d):
             return
         d.callback(node_stat)
@@ -709,7 +708,7 @@ class ZookeeperClient(object):
         """
         if not callable(watcher):
             raise SyntaxError("Invalid Watcher %r" % (watcher))
-        watcher = self._wrap_watcher(watcher)
+        watcher = self._wrap_watcher(watcher, None, None)
         zookeeper.set_watcher(self.handle, watcher)
 
     def set_session_callback(self, callback):

@@ -20,6 +20,8 @@
 #  along with txzookeeper.  If not, see <http://www.gnu.org/licenses/>.
 #
 
+import logging
+import StringIO
 import sys
 
 import zookeeper
@@ -71,6 +73,26 @@ class ZookeeperTestCase(TestCase, MockerTestCase):
         if original_value is self._missing_attr:
             return None
         return original_value
+
+    def capture_log(
+        self, name="", level=logging.INFO, log_file=None, formatter=None):
+        """Capture log channel to StringIO"""
+        if log_file is None:
+            log_file = StringIO.StringIO()
+        log_handler = logging.StreamHandler(log_file)
+        if formatter:
+            log_handler.setFormatter(formatter)
+        logger = logging.getLogger(name)
+        logger.addHandler(log_handler)
+        old_logger_level = logger.level
+        logger.setLevel(level)
+
+        @self.addCleanup
+        def reset_logging():
+            logger.removeHandler(log_handler)
+            logger.setLevel(old_logger_level)
+
+        return log_file
 
 
 def egg_test_runner():

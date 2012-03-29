@@ -1,18 +1,39 @@
 from functools import partial
 
+import contextlib
+import logging
 import zookeeper
+
 from twisted.internet.defer import inlineCallbacks
 
 from client import ZookeeperClient, ClientEvent
 from retry import RetryClient
 
 
+class StopWatcher(Exception):
+    pass
+
+
+WATCH_KIND_MAP = {
+    "child": "get_children_and_watch",
+    "exists": "exists_and_watch",
+    "get": "get_and_watch"
+    }
+
+
+log = logging.getLogger("txzk.managed")
+
+
 class Watch(object):
+    """
+    For application driven persistent watches, where the application
+    is manually resetting the watch.
+    """
 
-    __slots__ = ("client", "path", "kind", "callback")
+    __slots__ = ("_mgr", "_client", "_path", "_kind", "_callback")
 
-    def __init__(self, client, path, kind, callback):
-        self._cllient = client
+    def __init__(self, mgr, path, kind, callback):
+        self._mgr = mgr
         self._path = path
         self._kind = kind
         self._callback = callback
@@ -25,11 +46,34 @@ class Watch(object):
     def kind(self):
         return self._kind
 
-    def reset(self):
-        self.callback()
+    @contextlib.contextmanager
+    def _ctx(self):
+        mgr = self._mgr
+        del self._mgr
+        try:
+            yield mgr
+        finally:
+            mgr.remove(self)
 
-    def __call__(self):
-        pass
+    @inlineCallbacks
+    def reset(self):
+        with self._ctx() as mgr:
+            yield self._callback(
+                ClientEvent(zookeeper.SESSION_EVENT,
+                            zookeeper.CONNECTED_STATE,
+                            self._path))
+            mgr  # keep the flakes happy
+
+    def __call__(self, *args, **kw):
+        with self._ctx() as mgr:
+            mgr  # keep the flakes happy
+            if isinstance(self._callback, str):
+                import pdb; pdb.set_trace()
+                print self
+            return self._callback(*args, **kw)
+
+    def __str__(self):
+        return "<Watcher %s %s %r>" % (self.kind, self.path, self._callback)
 
 
 class WatchManager(object):
@@ -37,21 +81,34 @@ class WatchManager(object):
     watch_class = Watch
 
     def __init__(self):
-        self._watches = {}
+        self._watches = []
 
     def add(self, path, watch_type, watcher):
-        w = self.watch_class(path, watch_type, watcher)
+        w = self.watch_class(self, path, watch_type, watcher)
         self._watches.append(w)
         return w
 
+    def remove(self, w):
+        try:
+            self._watches.remove(w)
+        except ValueError:
+            pass
+
     def clear(self):
+        del self._watches
         self._watches = []
 
+    @inlineCallbacks
     def reset(self, *ignored):
         watches = self._watches
-        for w in watches:
-            w.reset()
         self._watches = []
+
+        for w in watches:
+            try:
+                yield w.reset()
+            except:
+                log.error("Error reseting watch %s with session event.", w)
+                continue
 
 
 class SessionClient(ZookeeperClient):
@@ -63,17 +120,21 @@ class SessionClient(ZookeeperClient):
     """
 
     def __init__(
-        self, servers=None, session_timeout=None, connect_timeout=10000):
+        self, servers=None, session_timeout=None, connect_timeout=4000):
         """
         """
         super(SessionClient, self).__init__(servers, session_timeout)
         self._connect_timeout = connect_timeout
         self._watches = WatchManager()
         self._ephemerals = {}
+        #self._connect_lock = DeferredLock()
 
-    # Restablish session ephemerals and watches
     @inlineCallbacks
     def cb_restablish_session(self, e=None):
+        """Called on session expiration to restablish the session.
+
+        This will reconnect
+        """
         while 1:
             try:
                 yield self.connect(timeout=self._connect_timeout)
@@ -82,7 +143,12 @@ class SessionClient(ZookeeperClient):
             else:
                 break
         for path, e in self._ephemerals:
-            yield self.create(path, e['data'], acls=e['acls'], flags=['flags'])
+            try:
+                yield self.create(
+                    path, e['data'], acls=e['acls'], flags=['flags'])
+            except zookeeper.NodeExistsException:
+                log.error("Attempt to create ephemeral node failed %r", path)
+
         yield self.watches.reset()
 
     # On restablish errback
@@ -95,7 +161,7 @@ class SessionClient(ZookeeperClient):
         """
         if (event_type == zookeeper.SESSION_EVENT and
             conn_state == zookeeper.EXPIRED_SESSION_STATE):
-            d = self._on_restablish_session()
+            d = self.cb_restablish_session()
             d.addErrback(self._on_restablish_errback)
             return d
         if event_type == zookeeper.SESSION_EVENT:
@@ -112,10 +178,15 @@ class SessionClient(ZookeeperClient):
         if not callable(watcher):
             raise SyntaxError("invalid watcher")
 
+        # handle conn watcher, separately.
+        if watch_type is None and path is None:
+            return self._zk_thread_callback(
+                self._watch_session_wrapper, watcher)
+
         return self._zk_thread_callback(
             partial(
                 self._watch_session_wrapper,
-                self._watches.add(watcher, watch_type, path)))
+                self._watches.add(path, watch_type, watcher)))
 
     # Track ephemerals
     def _cb_created(self, d, data, acls, flags, result_code, path):
@@ -135,7 +206,7 @@ class SessionClient(ZookeeperClient):
         self._ephemerals.pop(path, None)
         d.callback(result_code)
 
-    def _cb_set_acl(self, path, acls, d, result_code):
+    def _cb_set_acl(self, d, path, acls, result_code):
         if self._check_result(result_code, d):
             return
 
@@ -144,7 +215,7 @@ class SessionClient(ZookeeperClient):
 
         d.callback(result_code)
 
-    def _cb_set(self, path, data, d, result_code, node_stat):
+    def _cb_set(self, d, path, data, result_code, node_stat):
         if self._check_result(result_code, d):
             return
 

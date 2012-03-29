@@ -24,7 +24,7 @@
 #import time
 import zookeeper
 
-from twisted.internet.defer import inlineCallbacks  # , fail, succeed, Deferred
+from twisted.internet.defer import inlineCallbacks, Deferred
 
 from txzookeeper import managed
 
@@ -36,17 +36,110 @@ from txzookeeper.tests import ZookeeperTestCase, utils
 from txzookeeper.tests import test_client
 
 
-class ManagedClientCoreTests(ZookeeperTestCase):
+class WatchTest(ZookeeperTestCase):
+
+    def setUp(self):
+        self.watches = managed.WatchManager()
+
+    def tearDown(self):
+        self.watches.clear()
+        del self.watches
+
+    def test_add_remove(self):
+
+        w = self.watches.add("/foobar", "child", lambda x: 1)
+        self.assertIn(
+            "<Watcher child /foobar",
+            str(w))
+        self.assertIn(w, self.watches._watches)
+        self.watches.remove(w)
+        self.assertNotIn(w, self.watches._watches)
+        self.watches.remove(w)
+
+    @inlineCallbacks
+    def test_watch_fire_removes(self):
+        """Firing the watch removes it from the manager.
+        """
+        w = self.watches.add("/foobar", "child", lambda x: 1)
+        yield w("a")
+        self.assertNotIn(w, self.watches._watches)
+
+    @inlineCallbacks
+    def test_watch_fire_with_error_removes(self):
+        """Firing the watch removes it from the manager.
+        """
+        d = Deferred()
+
+        @inlineCallbacks
+        def cb_error(e):
+            yield d
+            raise ValueError("a")
+
+        w = self.watches.add("/foobar", "child", lambda x: 1)
+        try:
+            wd = w("a")
+            d.callback(True)
+            yield wd
+        except ValueError:
+            pass
+        self.assertNotIn(w, self.watches._watches)
+
+    @inlineCallbacks
+    def test_reset_with_error(self):
+        """A callback firing an error on reset is ignored.
+        """
+        output = self.capture_log("txzk.managed")
+        d = Deferred()
+        results = []
+
+        @inlineCallbacks
+        def callback(*args, **kw):
+            results.append((args, kw))
+            yield d
+            raise ValueError("a")
+
+        w = self.watches.add("/foobar", "child", callback)
+        reset_done = self.watches.reset()
+
+        (e,), _ = results.pop()
+        self.assertEqual(
+            str(e), "<ClientEvent session at '/foobar' state: connected>")
+        d.callback(True)
+        yield reset_done
+        self.assertNotIn(w, self.watches._watches)
+        self.assertIn("Error reseting watch", output.getvalue())
+
+    @inlineCallbacks
+    def test_reset(self):
+        """Reset fires a synthentic client event, and clears watches.
+        """
+        d = Deferred()
+        results = []
+
+        def callback(*args, **kw):
+            results.append((args, kw))
+            return d
+
+        w = self.watches.add("/foobar", "child", callback)
+        reset_done = self.watches.reset()
+
+        (e,), _ = results.pop()
+        self.assertEqual(
+            str(e), "<ClientEvent session at '/foobar' state: connected>")
+        d.callback(True)
+        yield reset_done
+        self.assertNotIn(w, self.watches._watches)
+
+
+class SessionClientTests(test_client.ClientTests):
     timeout = 5
 
     def setUp(self):
 #        super(ZookeeperTestCase, self).setUp()
-        super(test_client.ClientTests, self).setUp()
-        zookeeper.set_debug_level(0)
-        self.client = managed.ManagedClient("127.0.0.1:2181")
-        self.cient2 = None
+        super(SessionClientTests, self).setUp()
+        self.client = managed.SessionClient("127.0.0.1:2181")
 
-    def tearDown(self):
+    def xtearDown(self):
         super(ZookeeperTestCase, self).tearDown()
         if self.client.connected:
             utils.deleteTree(handle=self.client.handle)
