@@ -135,24 +135,39 @@ class SessionClientTests(test_client.ClientTests):
     timeout = 5
 
     def setUp(self):
-#        super(ZookeeperTestCase, self).setUp()
         super(SessionClientTests, self).setUp()
         self.client = managed.SessionClient("127.0.0.1:2181")
 
-    def xtearDown(self):
-        super(ZookeeperTestCase, self).tearDown()
+
+class ManagedClientTests(test_client.ClientTests):
+    timeout = 5
+
+    def setUp(self):
+        super(ManagedClientTests, self).setUp()
+        self.client = managed.ManagedClient("127.0.0.1:2181")
+
+    def test_wb_connect_after_timeout(self):
+        """white box tests disabled for retryclient."""
+
+    def test_wb_reconnect_after_timeout_and_close(self):
+        """white box tests disabled for retryclient."""
+
+
+class SessionClientExpireTests(ZookeeperTestCase):
+
+    def setUp(self):
+        super(SessionClientExpireTests, self).setUp()
+        self.client = managed.SessionClient("127.0.0.1:2181", 3000)
+        self.client2 = None
+
+    def tearDown(self):
         if self.client.connected:
             utils.deleteTree(handle=self.client.handle)
             self.client.close()
+
         if self.client2 and self.client2.connected:
             self.client2.close()
+        super(SessionClientExpireTests, self).tearDown()
 
-    @inlineCallbacks
-    def xtest_ephemeral_tracking(self):
-        yield self.client.create("/foobar")
-        self.assertFalse(self.client._ephemerals)
-        self.client.create("/foobar/abc", flags=zookeeper.EPHEMERAL)
-
-    @inlineCallbacks
-    def xtest_child_watch_tracking(self):
+    def xtest_ephemeral_and_watch_recreate(self):
         pass

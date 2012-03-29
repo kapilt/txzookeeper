@@ -4,7 +4,7 @@ import contextlib
 import logging
 import zookeeper
 
-from twisted.internet.defer import inlineCallbacks
+from twisted.internet.defer import inlineCallbacks, DeferredLock
 
 from client import ZookeeperClient, ClientEvent
 from retry import RetryClient
@@ -127,14 +127,23 @@ class SessionClient(ZookeeperClient):
         self._connect_timeout = connect_timeout
         self._watches = WatchManager()
         self._ephemerals = {}
-        #self._connect_lock = DeferredLock()
+        self._reconnect_lock = DeferredLock()
 
     @inlineCallbacks
     def cb_restablish_session(self, e=None):
         """Called on session expiration to restablish the session.
 
-        This will reconnect
+        This will reconnect to zk, restabslish ephemerals, and trigger watches.
         """
+        yield self._reconnect_lock.acquire()
+        try:
+            if self.connected or not self.unrecoverable:
+                return
+            yield self._cb_restablish_session()
+        finally:
+            yield self._reconnect_lock.release()
+
+    def _cb_restablish_session(self):
         while 1:
             try:
                 yield self.connect(timeout=self._connect_timeout)
@@ -151,9 +160,10 @@ class SessionClient(ZookeeperClient):
 
         yield self.watches.reset()
 
-    # On restablish errback
-    def _on_restablish_errback(self, error):
-        print "Error", error
+    def _cb_restablish_errback(self, failure):
+        """If there's an error restablishing the session log it."""
+        log.error("Error while trying to restablish connection %s\n%s" % (
+            failure.value, failure.getTraceback()))
 
     # Dispatch on session expiration
     def _watch_session_wrapper(self, watcher, event_type, conn_state, path):
