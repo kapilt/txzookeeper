@@ -34,22 +34,13 @@ from twisted.internet.defer import inlineCallbacks, returnValue, Deferred
 __all__ = ["retry", "RetryClient"]
 
 
-def is_retryable(e, expire_handler=False):
+def is_retryable(e):
     """Determine if an exception signifies a recoverable connection error.
     """
-    if expire_handler:
-        return isinstance(
-            e,
-            (zookeeper.ClosingException,
-             zookeeper.ConnectionLossException,
-             zookeeper.OperationTimeoutException,
-#             zookeeper.NotConnectedException,
-             zookeeper.SessionExpiredException))
     return isinstance(
         e,
         (zookeeper.ClosingException,
          zookeeper.ConnectionLossException,
-#         zookeeper.NotConnectedException,
          zookeeper.OperationTimeoutException))
 
 
@@ -79,7 +70,7 @@ def get_delay(session_timeout, max_delay=5, session_fraction=30.0):
     return min(retry_delay, max_delay)
 
 
-def check_retryable(retry_client, max_time, error, expire_handler=False):
+def check_retryable(retry_client, max_time, error):
     """Check an error and a client to see if an operation is retryable.
 
     :param retry_client: A txzookeeper client
@@ -87,11 +78,11 @@ def check_retryable(retry_client, max_time, error, expire_handler=False):
     :param error: The client operation exception.
     """
     # Only if the error is known.
-    if not is_retryable(error, expire_handler):
+    if not is_retryable(error):
         return False
 
     # Only if we've haven't exceeded the max allotted time.
-    if max_time <= time.time() and not expire_handler:
+    if max_time <= time.time():
         return False
 
     # Only if the client hasn't been explicitly closed.
@@ -106,7 +97,7 @@ def check_retryable(retry_client, max_time, error, expire_handler=False):
 
 
 @inlineCallbacks
-def retry(client, func, expire_handler, *args, **kw):
+def retry(client, func, *args, **kw):
     """Constructs a retry wrapper around a function that retries invocations.
 
     If the function execution results in an exception due to a transient
@@ -131,13 +122,8 @@ def retry(client, func, expire_handler, *args, **kw):
             # If we keep retrying past the 1.5 * session timeout without
             # success just die, the session expiry is fatal.
             max_time = session_timeout * 1.5 + time.time()
-            if not check_retryable(client, max_time, e, expire_handler):
+            if not check_retryable(client, max_time, e):
                 raise
-
-            # Support retry of ops against expired sessions with a handler
-            if (isinstance(e, zookeeper.SessionExpiredException)
-                and expire_handler):
-                yield expire_handler(e)
 
             # Give the connection a chance to auto-heal.
             yield sleep(get_delay(session_timeout))
@@ -146,7 +132,7 @@ def retry(client, func, expire_handler, *args, **kw):
         returnValue(value)
 
 
-def retry_watch(client, func, expire_handler, *args, **kw):
+def retry_watch(client, func, *args, **kw):
     """Contructs a wrapper around a watch callable that retries invocations.
 
     If the callable execution results in an exception due to a transient
@@ -180,20 +166,13 @@ def retry_watch(client, func, expire_handler, *args, **kw):
         """Errback, verifes an op is retryable, and delays the next retry.
         """
         # Check that operation is retryable.
-        if not check_retryable(client, max_time, f.value, expire_handler):
+        if not check_retryable(client, max_time, f.value):
             return f
-
-        # Support retry of ops against expired sessions with a handler
-        if (isinstance(f.value, zookeeper.SessionExpiredException)
-            and expire_handler):
-            restablish_d = expire_handler(f.value)
 
         # Give the connection a chance to auto-heal
         d = sleep(get_delay(session_timeout))
         d.addCallback(retry_inner)
 
-        if expire_handler:
-            return restablish_d.addCallback(d)
         return d
 
     def retry_inner(value):
@@ -255,69 +234,52 @@ class RetryClient(object):
     are retry enabled.
     """
 
-    def __init__(self, client, expiration_handler=None):
+    def __init__(self, client):
         self.client = client
-        self.expire_handler = expiration_handler
 
     def add_auth(self, *args, **kw):
-        return retry(
-            self.client, self.client.add_auth, self.expire_handler,
-            *args, **kw)
+        return retry(self.client, self.client.add_auth, *args, **kw)
 
     def create(self, *args, **kw):
-        return retry(
-            self.client, self.client.create, self.expire_handler, *args, **kw)
+        return retry(self.client, self.client.create, *args, **kw)
 
     def delete(self, *args, **kw):
-        return retry(
-            self.client, self.client.delete, self.expire_handler, *args, **kw)
+        return retry(self.client, self.client.delete, *args, **kw)
 
     def exists(self, *args, **kw):
-        return retry(
-            self.client, self.client.exists, self.expire_handler,
-            *args, **kw)
+        return retry(self.client, self.client.exists, *args, **kw)
 
     def get(self, *args, **kw):
-        return retry(
-            self.client, self.client.get, self.expire_handler, *args, **kw)
+        return retry(self.client, self.client.get, *args, **kw)
 
     def get_acl(self, *args, **kw):
-        return retry(
-            self.client, self.client.get_acl, self.expire_handler, *args, **kw)
+        return retry(self.client, self.client.get_acl, *args, **kw)
 
     def get_children(self, *args, **kw):
-        return retry(
-            self.client, self.client.get_children, self.expire_handler,
-            *args, **kw)
+        return retry(self.client, self.client.get_children, *args, **kw)
 
     def set_acl(self, *args, **kw):
-        return retry(
-            self.client, self.client.set_acl, self.expire_handler, *args, **kw)
+        return retry(self.client, self.client.set_acl, *args, **kw)
 
     def set(self, *args, **kw):
-        return retry(self.client, self.client.set, self.expire_handler,
-                     *args, **kw)
+        return retry(self.client, self.client.set, *args, **kw)
 
     def sync(self, *args, **kw):
-        return retry(self.client, self.client.sync, self.expire_handler,
-                     *args, **kw)
+        return retry(self.client, self.client.sync, *args, **kw)
 
     # Watch retries
 
     def exists_and_watch(self, *args, **kw):
         return retry_watch(
-            self.client, self.client.exists_and_watch, self.expire_handler,
-            *args, **kw)
+            self.client, self.client.exists_and_watch, *args, **kw)
 
     def get_and_watch(self, *args, **kw):
         return retry_watch(
-            self.client, self.client.get_and_watch, self.expire_handler,
-            *args, **kw)
+            self.client, self.client.get_and_watch, *args, **kw)
 
     def get_children_and_watch(self, *args, **kw):
         return retry_watch(
-            self.client, self.client.get_children_and_watch,
-            self.expire_handler, *args, **kw)
+            self.client, self.client.get_children_and_watch, *args, **kw)
 
     # Passthrough methods
 

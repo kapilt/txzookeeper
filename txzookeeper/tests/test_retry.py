@@ -81,7 +81,7 @@ class RetryCoreTests(ZookeeperTestCase):
             """Hello World"""
             return results.pop(0)
 
-        result = yield retry(ZookeeperClient(), original, None, "magic")
+        result = yield retry(ZookeeperClient(), original, "magic")
         self.assertEqual(result, 21)
 
     @inlineCallbacks
@@ -101,7 +101,7 @@ class RetryCoreTests(ZookeeperTestCase):
 
         client = ZookeeperClient()
         foo = Foobar()
-        result = yield retry(client, foo.original, None, "magic")
+        result = yield retry(client, foo.original, "magic")
         self.assertEqual(result, 21)
 
     @inlineCallbacks
@@ -117,7 +117,7 @@ class RetryCoreTests(ZookeeperTestCase):
             return results.pop(0)
 
         client = ZookeeperClient()
-        value_d, watch_d = retry_watch(client, original, None, "magic")
+        value_d, watch_d = retry_watch(client, original, "magic")
         self.assertEqual((yield value_d), 21)
         self.assertEqual((yield watch_d), 22)
 
