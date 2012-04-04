@@ -166,8 +166,16 @@ class SessionClientExpireTests(ZookeeperTestCase):
         self.client2 = ZookeeperClient(self.client.servers)
         yield self.client2.connect(client_id=self.client.client_id)
         yield self.client2.close()
-        # It takes some time to propogate (1/3 session time as ping)
+        # It takes some time to propagate (1/3 session time as ping)
         yield self.sleep(2)
+
+    @inlineCallbacks
+    def test_session_expiration_conn(self):
+        session_id = self.client.client_id[0]
+        yield self.client.create("/fo-1", "abc")
+        yield self.expire_session()
+        yield self.client.exists("/")
+        self.assertNotEqual(session_id, self.client.client_id[0])
 
     @inlineCallbacks
     def test_session_expiration_conn_watch(self):

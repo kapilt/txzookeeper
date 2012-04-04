@@ -58,16 +58,14 @@ class Watch(object):
 
     @inlineCallbacks
     def reset(self):
-        with self._ctx() as mgr:
+        with self._ctx():
             yield self._callback(
                 zookeeper.SESSION_EVENT,
                 zookeeper.CONNECTED_STATE,
                 self._path)
-            mgr  # keep the flakes happy
 
     def __call__(self, *args, **kw):
-        with self._ctx() as mgr:
-            mgr  # keep the flakes happy
+        with self._ctx():
             return self._callback(*args, **kw)
 
     def __str__(self):
@@ -115,11 +113,29 @@ class WatchManager(object):
 
 
 class SessionClient(ZookeeperClient):
-    """A managed client that automatically restablishes ephemerals and
+    """A managed client that automatically re-establishes ephemerals and
     triggers watches after reconnecting post session expiration.
 
     This abstracts the client from session expiration handling. It does
     come at a cost though.
+
+    There are two application constraints that need to be considered for usage
+    of the SessionClient or ManagedClient. The first is that watch callbacks
+    which examine the event, must be able to handle the synthetic session
+    event which is sent to them when the session is re-established.
+
+    The second and more problematic is that algorithms/patterns
+    utilizing ephemeral sequence nodes need to be rethought, as the
+    session client will recreate the nodes when reconnecting at their
+    previous paths. Some algorithms (like the std zk lock recipe) rely
+    on properties like the smallest valued ephemeral sequence node in
+    a container to identify the lock holder, with the notion that upon
+    session expiration a new lock/leader will be sought. Sequence
+    ephemeral node recreation in this context is problematic as the
+    node is recreated at the exact previous path. Alternative lock
+    strategies that do work are fairly simple at low volume, such as
+    owning a particular node path (ie. /locks/lock-holder) with an
+    ephemeral.
     """
 
     def __init__(
@@ -135,9 +151,10 @@ class SessionClient(ZookeeperClient):
 
     @inlineCallbacks
     def cb_restablish_session(self, e=None):
-        """Called on intercept of session expiration to restablish the session.
+        """Called on intercept of session expiration to create new session.
 
-        This will reconnect to zk, restabslish ephemerals, and trigger watches.
+        This will reconnect to zk, re-establish ephemerals, and
+        trigger watches.
         """
         yield self._reconnect_lock.acquire()
 
@@ -175,7 +192,7 @@ class SessionClient(ZookeeperClient):
 
     @inlineCallbacks
     def _cb_restablish_session(self):
-        """Restablish a new session, and recreate ephemerals and watches.
+        """Re-establish a new session, and recreate ephemerals and watches.
         """
         while 1:
             # Reconnect
@@ -201,7 +218,7 @@ class SessionClient(ZookeeperClient):
         yield self._watches.reset()
 
     def _cb_restablish_errback(self, err, failure):
-        """If there's an error restablishing the session log it.
+        """If there's an error re-establishing the session log it.
         """
         log.error("Error while trying to restablish connection %s\n%s" % (
             failure.value, failure.getTraceback()))
@@ -221,6 +238,11 @@ class SessionClient(ZookeeperClient):
         yield self._cb_restablish_session()
         raise zookeeper.ConnectionLossException
 
+    @inlineCallbacks
+    def _cb_connection_event(self, evt):
+        """
+        """
+
     # client connected tracker
     def _check_connected(self, d):
         """Clients are automatically reconnected."""
@@ -234,6 +256,10 @@ class SessionClient(ZookeeperClient):
         c_d = self.cb_restablish_session()
 
         def after_connected(client):
+            """Return a transient connection failure.
+
+            The retry client will automatically attempt to retry the operation.
+            """
             return fail(zookeeper.ConnectionLossException("Retry"))
 
         c_d.addCallback(after_connected)
