@@ -96,15 +96,20 @@ class ConnectionException(zookeeper.ZooKeeperException):
 
     @property
     def state_name(self):
-        return STATE_NAME_MAPPING[self.args[2]]
+        return STATE_NAME_MAPPING.get(self.args[2], "unknown")
 
     @property
     def type_name(self):
-        return TYPE_NAME_MAPPING[self.args[1]]
+        return TYPE_NAME_MAPPING.get(self.args[1], "unknown")
+
+    @property
+    def handle(self):
+        return self.args[3]
 
     def __str__(self):
-        return "<txzookeeper.ConnectionException type: %s state: %s>" % (
-            self.type_name, self.state_name)
+        return (
+            "<txzookeeper.ConnectionException handle: %s type: %s state: %s>"
+            % (self.handle, self.type_name, self.state_name))
 
 
 def is_connection_exception(e):
@@ -133,11 +138,11 @@ class ClientEvent(namedtuple("ClientEvent", 'type, connection_state, path')):
 
     @property
     def type_name(self):
-        return TYPE_NAME_MAPPING[self.type]
+        return TYPE_NAME_MAPPING.get(self.type, "unknown")
 
     @property
     def state_name(self):
-        return STATE_NAME_MAPPING[self.connection_state]
+        return STATE_NAME_MAPPING.get(self.connection_state, "unknown")
 
     def __repr__(self):
         return  "<ClientEvent %s at %r state: %s>" % (
@@ -168,6 +173,10 @@ class ZookeeperClient(object):
         self._connection_error_callback = None
         self.connected = False
         self.handle = None
+
+    def __repr__(self):
+        return  "<txZookeeperClient client: %s handle: %r state: %s>" % (
+            self.client_id[0], self.handle, self.state)
 
     def _check_connected(self, d):
         if not self.connected:
@@ -396,6 +405,7 @@ class ZookeeperClient(object):
         d = defer.Deferred()
         if self._check_result(result, d):
             return d
+        self.handle = None
         d.callback(True)
         return d
 
@@ -442,7 +452,6 @@ class ZookeeperClient(object):
         else:
             self.handle = zookeeper.init(
                 self._servers, callback, self._session_timeout)
-
         return d
 
     def _cb_connected(
@@ -465,6 +474,7 @@ class ZookeeperClient(object):
             # If we timed out and then connected, then close the conn.
             if state == zookeeper.CONNECTED_STATE and scheduled_timeout.called:
                 self.close()
+                return
 
             # Send session events to the callback, in addition to any
             # duplicate session events that will be sent for extant watches.
@@ -473,7 +483,10 @@ class ZookeeperClient(object):
                     self, ClientEvent(type, state, path))
 
             return
-        elif state == zookeeper.CONNECTED_STATE:
+        # Connected successfully, or If we're expired on an initial
+        # connect, someone else expired us.
+        elif state in (zookeeper.CONNECTED_STATE,
+                       zookeeper.EXPIRED_SESSION_STATE):
             connect_deferred.callback(self)
             return
 
@@ -519,12 +532,12 @@ class ZookeeperClient(object):
         if self._check_connected(d):
             return d
 
-        callback = self._zk_thread_callback(self._cb_delete, d)
+        callback = self._zk_thread_callback(self._cb_deleted, d, path)
         result = zookeeper.adelete(self.handle, path, version, callback)
         self._check_result(result, d)
         return d
 
-    def _cb_delete(self, d, result_code):
+    def _cb_deleted(self, d, path, result_code):
         if self._check_result(result_code, d):
             return
         d.callback(result_code)
@@ -746,6 +759,10 @@ class ZookeeperClient(object):
         """
         if not callable(callback):
             raise TypeError("Invalid callback %r" % callback)
+        if self._connection_error_callback is not None:
+            raise RuntimeError((
+                "Connection error handlers can't be changed %s" %
+                self._connection_error_callback))
         self._connection_error_callback = callback
 
     def set_deterministic_order(self, boolean):

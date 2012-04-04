@@ -4,9 +4,10 @@ import contextlib
 import logging
 import zookeeper
 
-from twisted.internet.defer import inlineCallbacks, DeferredLock
+from twisted.internet.defer import (
+    inlineCallbacks, DeferredLock, fail, returnValue)
 
-from client import ZookeeperClient, ClientEvent
+from client import ZookeeperClient, ClientEvent, NotConnectedException
 from retry import RetryClient
 
 
@@ -59,17 +60,14 @@ class Watch(object):
     def reset(self):
         with self._ctx() as mgr:
             yield self._callback(
-                ClientEvent(zookeeper.SESSION_EVENT,
-                            zookeeper.CONNECTED_STATE,
-                            self._path))
+                zookeeper.SESSION_EVENT,
+                zookeeper.CONNECTED_STATE,
+                self._path)
             mgr  # keep the flakes happy
 
     def __call__(self, *args, **kw):
         with self._ctx() as mgr:
             mgr  # keep the flakes happy
-            if isinstance(self._callback, str):
-                import pdb; pdb.set_trace()
-                print self
             return self._callback(*args, **kw)
 
     def __str__(self):
@@ -94,6 +92,10 @@ class WatchManager(object):
         except ValueError:
             pass
 
+    def iterkeys(self):
+        for w in self._watches:
+            yield (w.path, w.kind)
+
     def clear(self):
         del self._watches
         self._watches = []
@@ -106,8 +108,9 @@ class WatchManager(object):
         for w in watches:
             try:
                 yield w.reset()
-            except:
-                log.error("Error reseting watch %s with session event.", w)
+            except Exception, e:
+                log.error("Error reseting watch %s with session event. %s %r",
+                          w, e, e)
                 continue
 
 
@@ -128,51 +131,123 @@ class SessionClient(ZookeeperClient):
         self._watches = WatchManager()
         self._ephemerals = {}
         self._reconnect_lock = DeferredLock()
+        self.set_connection_error_callback(self._cb_connection_error)
 
     @inlineCallbacks
     def cb_restablish_session(self, e=None):
-        """Called on session expiration to restablish the session.
+        """Called on intercept of session expiration to restablish the session.
 
         This will reconnect to zk, restabslish ephemerals, and trigger watches.
         """
         yield self._reconnect_lock.acquire()
+
         try:
-            if self.connected or not self.unrecoverable:
+            # If its been explicitly closed, don't restablish.
+            if self.handle is None:
                 return
-            yield self._cb_restablish_session()
+
+            # If its a stale handle, don't restablish
+            try:
+                zookeeper.is_unrecoverable(self.handle)
+            except zookeeper.ZooKeeperException:
+                if e:
+                    raise e
+                return
+
+            # Its already been restablished, don't restablish.
+            if not self.unrecoverable:
+                return
+            elif self.connected:
+                self.close()
+                self.handle = 0
+            elif isinstance(self.handle, int):
+                self.handle = 0
+
+            # Restablish
+            assert self.handle == 0
+            yield self._cb_restablish_session().addErrback(
+                self._cb_restablish_errback, e)
+
+        except Exception, e:
+            log.error("error while restablish %r %s" % (e, e))
         finally:
             yield self._reconnect_lock.release()
 
+    @inlineCallbacks
     def _cb_restablish_session(self):
+        """Restablish a new session, and recreate ephemerals and watches.
+        """
         while 1:
+            # Reconnect
+            if self.handle is None:
+                returnValue(self.handle)
             try:
                 yield self.connect(timeout=self._connect_timeout)
-            except:
+            except zookeeper.ZooKeeperException, e:
+                log.exception("Error while connecting %r %s" % (e, e))
                 continue
             else:
                 break
-        for path, e in self._ephemerals:
+
+        items = self._ephemerals.items()
+        self._ephemerals = {}
+
+        for path, e in items:
             try:
                 yield self.create(
-                    path, e['data'], acls=e['acls'], flags=['flags'])
+                    path, e['data'], acls=e['acls'], flags=e['flags'])
             except zookeeper.NodeExistsException:
                 log.error("Attempt to create ephemeral node failed %r", path)
+        yield self._watches.reset()
 
-        yield self.watches.reset()
-
-    def _cb_restablish_errback(self, failure):
-        """If there's an error restablishing the session log it."""
+    def _cb_restablish_errback(self, err, failure):
+        """If there's an error restablishing the session log it.
+        """
         log.error("Error while trying to restablish connection %s\n%s" % (
             failure.value, failure.getTraceback()))
+        return failure
 
-    # Dispatch on session expiration
+    @inlineCallbacks
+    def _cb_connection_error(self,  client, error):
+        """Convert session expiration to a transient connection error.
+
+        Dispatches from api usage error.
+        """
+        if not isinstance(error, (
+            zookeeper.SessionExpiredException,
+            NotConnectedException,
+            zookeeper.ClosingException)):
+            raise error
+        yield self._cb_restablish_session()
+        raise zookeeper.ConnectionLossException
+
+    # client connected tracker
+    def _check_connected(self, d):
+        """Clients are automatically reconnected."""
+        if self.connected:
+            return
+
+        if self.handle is None:
+            d.errback(NotConnectedException("not connected"))
+            return d
+
+        c_d = self.cb_restablish_session()
+
+        def after_connected(client):
+            return fail(zookeeper.ConnectionLossException("Retry"))
+
+        c_d.addCallback(after_connected)
+        c_d.chainDeferred(d)
+        return d
+
+    # Dispatch from node watches on session expiration
     def _watch_session_wrapper(self, watcher, event_type, conn_state, path):
         """Watch wrapper that diverts session events to a connection callback.
         """
         if (event_type == zookeeper.SESSION_EVENT and
             conn_state == zookeeper.EXPIRED_SESSION_STATE):
             d = self.cb_restablish_session()
-            d.addErrback(self._on_restablish_errback)
+            d.addErrback(self._cb_restablish_errback)
             return d
         if event_type == zookeeper.SESSION_EVENT:
             if self._session_event_callback:
@@ -246,4 +321,4 @@ class ManagedClient(RetryClient):
 def ManagedClient(servers=None, session_timeout=None, connect_timeout=10000):
     from retry import RetryClient
     client = SessionClient(servers, session_timeout, connect_timeout)
-    return RetryClient(client, client.cb_restablish_session)
+    return RetryClient(client)

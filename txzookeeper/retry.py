@@ -43,11 +43,13 @@ def is_retryable(e, expire_handler=False):
             (zookeeper.ClosingException,
              zookeeper.ConnectionLossException,
              zookeeper.OperationTimeoutException,
+#             zookeeper.NotConnectedException,
              zookeeper.SessionExpiredException))
     return isinstance(
         e,
         (zookeeper.ClosingException,
          zookeeper.ConnectionLossException,
+#         zookeeper.NotConnectedException,
          zookeeper.OperationTimeoutException))
 
 
@@ -118,18 +120,17 @@ def retry(client, func, expire_handler, *args, **kw):
            must return a single value (either a deferred or result
            value).
     """
-    # For clients which aren't connected (session timeout == None)
-    # we raise the errors to the callers
-    session_timeout = client.session_timeout or 0
-
-    # If we keep retrying past the 1.5 * session timeout without
-    # success just die, the session expiry is fatal.
-    max_time = session_timeout * 1.5 + time.time()
-
     while 1:
         try:
             value = yield func(*args, **kw)
         except Exception, e:
+            # For clients which aren't connected (session timeout == None)
+            # we raise the errors to the callers
+            session_timeout = client.session_timeout or 0
+
+            # If we keep retrying past the 1.5 * session timeout without
+            # success just die, the session expiry is fatal.
+            max_time = session_timeout * 1.5 + time.time()
             if not check_retryable(client, max_time, e, expire_handler):
                 raise
 
