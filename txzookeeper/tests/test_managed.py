@@ -251,12 +251,13 @@ class SessionClientExpireTests(ZookeeperTestCase):
     def test_ephemeral_no_track_sequence_nodes(self):
         """ Ephemeral tracking ignores sequence nodes.
         """
+        yield self.client.create("/music", "abc")
         yield self.client.create(
-            "/fo-", "abc",
+            "/music/u2-", "abc",
             flags=zookeeper.EPHEMERAL | zookeeper.SEQUENCE)
         yield self.expire_session()
-        children = yield self.client.get_children("/")
-        self.assertEqual(children, ["zookeeper"])
+        children = yield self.client.get_children("/music")
+        self.assertEqual(children, [])
 
     @inlineCallbacks
     def test_ephemeral_content_modification(self):
