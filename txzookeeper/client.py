@@ -70,6 +70,7 @@ STATE_NAME_MAPPING = {
     zookeeper.CONNECTED_STATE: "connected",
     zookeeper.CONNECTING_STATE: "connecting",
     zookeeper.EXPIRED_SESSION_STATE: "expired",
+    None: "unknown",
 }
 
 # Mapping of event type to human string.
@@ -79,7 +80,9 @@ TYPE_NAME_MAPPING = {
     zookeeper.CREATED_EVENT: "created",
     zookeeper.DELETED_EVENT: "deleted",
     zookeeper.CHANGED_EVENT: "changed",
-    zookeeper.CHILD_EVENT: "child"}
+    zookeeper.CHILD_EVENT: "child",
+    None: "unknown",
+    }
 
 
 class NotConnectedException(zookeeper.ZooKeeperException):
@@ -96,11 +99,11 @@ class ConnectionException(zookeeper.ZooKeeperException):
 
     @property
     def state_name(self):
-        return STATE_NAME_MAPPING.get(self.args[2], "unknown")
+        return STATE_NAME_MAPPING[self.args[2]]
 
     @property
     def type_name(self):
-        return TYPE_NAME_MAPPING.get(self.args[1], "unknown")
+        return TYPE_NAME_MAPPING[self.args[1]]
 
     @property
     def handle(self):
@@ -138,11 +141,11 @@ class ClientEvent(namedtuple("ClientEvent", 'type, connection_state, path')):
 
     @property
     def type_name(self):
-        return TYPE_NAME_MAPPING.get(self.type, "unknown")
+        return TYPE_NAME_MAPPING[self.type]
 
     @property
     def state_name(self):
-        return STATE_NAME_MAPPING.get(self.connection_state, "unknown")
+        return STATE_NAME_MAPPING[self.connection_state]
 
     def __repr__(self):
         return  "<ClientEvent %s at %r state: %s>" % (
@@ -175,8 +178,13 @@ class ZookeeperClient(object):
         self.handle = None
 
     def __repr__(self):
-        return  "<txZookeeperClient client: %s handle: %r state: %s>" % (
-            self.client_id[0], self.handle, self.state)
+        if not self.client_id:
+            session_id = ""
+        else:
+            session_id = self.client_id[0]
+
+        return  "<txZookeeperClient session: %s handle: %r state: %s>" % (
+            session_id, self.handle, self.state)
 
     def _check_connected(self, d):
         if not self.connected:
@@ -205,7 +213,7 @@ class ZookeeperClient(object):
                 # handler if specified.
                 if self._connection_error_callback:
                     # The result of the connection error handler is returned
-                    # to the api.
+                    # to the api invoker.
                     d = defer.maybeDeferred(
                         self._connection_error_callback,
                         self, error)
@@ -303,7 +311,7 @@ class ZookeeperClient(object):
         f_args = list(f_args)
 
         def wrapper(handle, *args):  # pragma: no cover
-            # make a copy the conn watch callback gets invoked multiple times
+            # make a copy, the conn watch callback gets invoked multiple times
             cb_args = list(f_args)
             cb_args.extend(args)
             reactor.callFromThread(func, *cb_args, **f_kw)
@@ -349,7 +357,11 @@ class ZookeeperClient(object):
         """
         if self.handle is None:
             return None
-        return zookeeper.client_id(self.handle)
+        try:
+            return zookeeper.client_id(self.handle)
+        # Invalid handle
+        except zookeeper.ZooKeeperException:
+            return None
 
     @property
     def unrecoverable(self):
@@ -445,7 +457,7 @@ class ZookeeperClient(object):
         if servers is not None:
             self._servers = servers
 
-        # Assemble client id if specified.
+        # Use client id if specified.
         if client_id:
             self.handle = zookeeper.init(
                 self._servers, callback, self._session_timeout, client_id)

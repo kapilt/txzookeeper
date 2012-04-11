@@ -136,7 +136,7 @@ class Lock(object):
         """Release the lock."""
 
         if not self._acquired:
-            error = LockError("Not holding lock %s"%(self.path))
+            error = LockError("Not holding lock %s" % (self.path))
             return fail(error)
 
         d = self._client.delete(self._candidate_path)

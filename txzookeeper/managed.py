@@ -5,7 +5,7 @@ import logging
 import zookeeper
 
 from twisted.internet.defer import (
-    inlineCallbacks, DeferredLock, fail, returnValue)
+    inlineCallbacks, DeferredLock, fail, returnValue, Deferred)
 
 from client import ZookeeperClient, ClientEvent, NotConnectedException
 from retry import RetryClient
@@ -136,6 +136,11 @@ class SessionClient(ZookeeperClient):
     strategies that do work are fairly simple at low volume, such as
     owning a particular node path (ie. /locks/lock-holder) with an
     ephemeral.
+
+    As a result the session client only tracks and restablishes non sequence
+    ephemeral nodes. For coordination around ephemeral sequence nodes it
+    provides for watching for the establishment of new sessions via
+    `subscribe_new_session`
     """
 
     def __init__(
@@ -146,8 +151,14 @@ class SessionClient(ZookeeperClient):
         self._connect_timeout = connect_timeout
         self._watches = WatchManager()
         self._ephemerals = {}
+        self._session_notifications = []
         self._reconnect_lock = DeferredLock()
         self.set_connection_error_callback(self._cb_connection_error)
+
+    def subscribe_new_session(self):
+        d = Deferred()
+        self._session_notifications.append(d)
+        return d
 
     @inlineCallbacks
     def cb_restablish_session(self, e=None):
@@ -159,11 +170,11 @@ class SessionClient(ZookeeperClient):
         yield self._reconnect_lock.acquire()
 
         try:
-            # If its been explicitly closed, don't restablish.
+            # If its been explicitly closed, don't re-establish.
             if self.handle is None:
                 return
 
-            # If its a stale handle, don't restablish
+            # If its a stale handle (ie. already closed), don't re-establish
             try:
                 zookeeper.is_unrecoverable(self.handle)
             except zookeeper.ZooKeeperException:
@@ -171,7 +182,7 @@ class SessionClient(ZookeeperClient):
                     raise e
                 return
 
-            # Its already been restablished, don't restablish.
+            # Its already connected, don't re-establish.
             if not self.unrecoverable:
                 return
             elif self.connected:
@@ -180,13 +191,12 @@ class SessionClient(ZookeeperClient):
             elif isinstance(self.handle, int):
                 self.handle = 0
 
-            # Restablish
-            assert self.handle == 0
+            # Re-establish
             yield self._cb_restablish_session().addErrback(
                 self._cb_restablish_errback, e)
 
         except Exception, e:
-            log.error("error while restablish %r %s" % (e, e))
+            log.error("error while re-establish %r %s" % (e, e))
         finally:
             yield self._reconnect_lock.release()
 
@@ -194,8 +204,8 @@ class SessionClient(ZookeeperClient):
     def _cb_restablish_session(self):
         """Re-establish a new session, and recreate ephemerals and watches.
         """
+        # Reconnect
         while 1:
-            # Reconnect
             if self.handle is None:
                 returnValue(self.handle)
             try:
@@ -206,6 +216,7 @@ class SessionClient(ZookeeperClient):
             else:
                 break
 
+        # Recreate ephemerals
         items = self._ephemerals.items()
         self._ephemerals = {}
 
@@ -215,12 +226,21 @@ class SessionClient(ZookeeperClient):
                     path, e['data'], acls=e['acls'], flags=e['flags'])
             except zookeeper.NodeExistsException:
                 log.error("Attempt to create ephemeral node failed %r", path)
+
+        # Signal watches
         yield self._watches.reset()
+
+        # Notify new session observers
+        notifications = self._session_notifications
+        self._session_notifications = []
+
+        for n in notifications:
+            n.callback(True)
 
     def _cb_restablish_errback(self, err, failure):
         """If there's an error re-establishing the session log it.
         """
-        log.error("Error while trying to restablish connection %s\n%s" % (
+        log.error("Error while trying to re-establish connection %s\n%s" % (
             failure.value, failure.getTraceback()))
         return failure
 
@@ -237,11 +257,6 @@ class SessionClient(ZookeeperClient):
             raise error
         yield self._cb_restablish_session()
         raise zookeeper.ConnectionLossException
-
-    @inlineCallbacks
-    def _cb_connection_event(self, evt):
-        """
-        """
 
     # client connected tracker
     def _check_connected(self, d):
@@ -304,7 +319,8 @@ class SessionClient(ZookeeperClient):
         if self._check_result(result_code, d):
             return
 
-        if flags & zookeeper.EPHEMERAL:
+        if (flags & zookeeper.EPHEMERAL) and not (
+            flags & zookeeper.SEQUENCE):
             self._ephemerals[path] = dict(
                 data=data, acls=acls, flags=flags)
 
@@ -336,15 +352,12 @@ class SessionClient(ZookeeperClient):
         d.callback(node_stat)
 
 
-class ManagedClient(RetryClient):
+class _ManagedClient(RetryClient):
 
-    def __init__(self, *args, **kw):
-        client = SessionClient(*args, **kw)
-        super(ManagedClient, self).__init__(
-            client, client.cb_restablish_session)
+    def subscribe_new_session(self):
+        return self.client.subscribe_new_session()
 
 
 def ManagedClient(servers=None, session_timeout=None, connect_timeout=10000):
-    from retry import RetryClient
     client = SessionClient(servers, session_timeout, connect_timeout)
-    return RetryClient(client)
+    return _ManagedClient(client)

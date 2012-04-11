@@ -178,6 +178,18 @@ class SessionClientExpireTests(ZookeeperTestCase):
         self.assertNotEqual(session_id, self.client.client_id[0])
 
     @inlineCallbacks
+    def test_session_expiration_notification(self):
+        session_id = self.client.client_id[0]
+        c_d, w_d = self.client.get_and_watch("/")
+        yield c_d
+        d = self.client.subscribe_new_session()
+        self.assertFalse(d.called)
+        yield self.expire_session()
+        yield d
+        yield w_d
+        self.assertNotEqual(session_id, self.client.client_id[0])
+
+    @inlineCallbacks
     def test_session_expiration_conn_watch(self):
         session_id = self.client.client_id[0]
         yield self.client.create("/fo-1", "abc")
@@ -234,6 +246,17 @@ class SessionClientExpireTests(ZookeeperTestCase):
             ["<ClientEvent session at '/fo-1' state: connected>",
              "<ClientEvent session at '/' state: connected>",
              "<ClientEvent session at '/fo-2' state: connected>"])
+
+    @inlineCallbacks
+    def test_ephemeral_no_track_sequence_nodes(self):
+        """ Ephemeral tracking ignores sequence nodes.
+        """
+        yield self.client.create(
+            "/fo-", "abc",
+            flags=zookeeper.EPHEMERAL | zookeeper.SEQUENCE)
+        yield self.expire_session()
+        children = yield self.client.get_children("/")
+        self.assertEqual(children, ["zookeeper"])
 
     @inlineCallbacks
     def test_ephemeral_content_modification(self):
