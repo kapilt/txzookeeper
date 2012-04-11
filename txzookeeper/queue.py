@@ -119,7 +119,7 @@ class Queue(object):
 
         flags = zookeeper.SEQUENCE
         if not self._persistent:
-            flags = flags|zookeeper.EPHEMERAL
+            flags = flags | zookeeper.EPHEMERAL
 
         d = self._client.create(
             "/".join((self._path, self.prefix)), item, self._acl, flags)

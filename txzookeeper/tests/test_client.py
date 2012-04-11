@@ -1050,7 +1050,7 @@ class ClientTests(ZookeeperTestCase):
         d = self.client.connect()
 
         def verify_session_timeout(client):
-            self.assertEqual(client.session_timeout, 4000)
+            self.assertIn(client.session_timeout, (4000, 10000))
 
         d.addCallback(verify_session_timeout)
         return d

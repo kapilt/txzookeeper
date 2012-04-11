@@ -1,5 +1,5 @@
 #
-#  Copyright (C) 2010-2011 Canonical Ltd. All Rights Reserved
+#  Copyright (C) 2010-2012 Canonical Ltd. All Rights Reserved
 #
 #  This file is part of txzookeeper.
 #
