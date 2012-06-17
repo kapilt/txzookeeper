@@ -64,7 +64,7 @@ def get_delay(session_timeout, max_delay=5, session_fraction=30.0):
 
     :param session_timeout: The timeout for the session, in milliseconds
     :param max_delay: The max delay for a retry, in seconds.
-    :param session_fraction: The fractinoal amount of a timeout to wait
+    :param session_fraction: The fractional amount of a timeout to wait
     """
     retry_delay = session_timeout / (float(session_fraction) * 1000)
     return min(retry_delay, max_delay)
@@ -111,20 +111,20 @@ def retry(client, func, *args, **kw):
            must return a single value (either a deferred or result
            value).
     """
-    # For clients which aren't connected (session timeout == None)
-    # we raise the errors to the callers
-    session_timeout = client.session_timeout or 0
-
-    # If we keep retrying past the 1.5 * session timeout without
-    # success just die, the session expiry is fatal.
-    max_time = session_timeout * 1.5 + time.time()
-
     while 1:
         try:
             value = yield func(*args, **kw)
         except Exception, e:
+            # For clients which aren't connected (session timeout == None)
+            # we raise the errors to the callers
+            session_timeout = client.session_timeout or 0
+
+            # If we keep retrying past the 1.5 * session timeout without
+            # success just die, the session expiry is fatal.
+            max_time = session_timeout * 1.5 + time.time()
             if not check_retryable(client, max_time, e):
                 raise
+
             # Give the connection a chance to auto-heal.
             yield sleep(get_delay(session_timeout))
             continue
@@ -172,6 +172,7 @@ def retry_watch(client, func, *args, **kw):
         # Give the connection a chance to auto-heal
         d = sleep(get_delay(session_timeout))
         d.addCallback(retry_inner)
+
         return d
 
     def retry_inner(value):
