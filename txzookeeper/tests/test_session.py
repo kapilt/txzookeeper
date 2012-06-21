@@ -199,7 +199,7 @@ class ClientSessionTests(ZookeeperTestCase):
         yield d
 
         # Connect a client to the same session on a different node.
-        self.client2 = ZookeeperClient(self.cluster[0].address)
+        self.client2 = ZookeeperClient(self.cluster[1].address)
         yield self.client2.connect(client_id=self.client.client_id)
 
         # Close the new client and wait for the event propogation
@@ -250,8 +250,7 @@ class ClientSessionTests(ZookeeperTestCase):
         yield self.client.connect()
 
         yield self.client.create("/hello", flags=zookeeper.EPHEMERAL)
-        exists_d, watch_d = self.client.exists_and_watch("/hello")
-        yield exists_d
+        self.assertTrue((yield self.client.exists("/hello")))
 
         # Shutdown the server the client is connected to
         self.cluster[2].stop()
