@@ -1,3 +1,9 @@
+txzookeeper (0.9.6-0ubuntu3) quantal; urgency=low
+
+  * managed client implementation with auto session expiration behavior
+
+ -- kapil <kapil@objectrealms.net>  Fri, 22 Jun 2012 03:00:08 -0400
+
 txzookeeper (0.8.0-0ubuntu1) natty; urgency=low
 
   * Much improved session event and connection error handling (and cluster tests)
