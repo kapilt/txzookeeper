@@ -316,7 +316,7 @@ class SessionClient(ZookeeperClient):
 
     # Track ephemerals
     def _cb_created(self, d, data, acls, flags, result_code, path):
-        if self._check_result(result_code, d):
+        if self._check_result(result_code, d, path=path):
             return
 
         if (flags & zookeeper.EPHEMERAL) and not (
@@ -327,14 +327,14 @@ class SessionClient(ZookeeperClient):
         d.callback(path)
 
     def _cb_deleted(self, d, path, result_code):
-        if self._check_result(result_code, d):
+        if self._check_result(result_code, d, path=path):
             return
 
         self._ephemerals.pop(path, None)
         d.callback(result_code)
 
     def _cb_set_acl(self, d, path, acls, result_code):
-        if self._check_result(result_code, d):
+        if self._check_result(result_code, d, path=path):
             return
 
         if path in self._ephemerals:
@@ -343,7 +343,7 @@ class SessionClient(ZookeeperClient):
         d.callback(result_code)
 
     def _cb_set(self, d, path, data, result_code, node_stat):
-        if self._check_result(result_code, d):
+        if self._check_result(result_code, d, path=path):
             return
 
         if path in self._ephemerals:

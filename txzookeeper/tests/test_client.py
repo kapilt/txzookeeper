@@ -24,13 +24,13 @@
 import base64
 import hashlib
 
-from twisted.internet.defer import Deferred
+from twisted.internet.defer import Deferred, maybeDeferred
 from twisted.internet.base import DelayedCall
 from twisted.python.failure import Failure
 
 import zookeeper
 
-from mocker import ANY, MATCH
+from mocker import ANY, MATCH, ARGS
 from txzookeeper.tests import ZookeeperTestCase, utils
 from txzookeeper.client import (
     ZookeeperClient, ZOO_OPEN_ACL_UNSAFE, ConnectionTimeoutException,
@@ -120,6 +120,41 @@ class ClientTests(ZookeeperTestCase):
             self.assertEquals(client.connected, True)
             self.assertEquals(client.state, zookeeper.CONNECTED_STATE)
         d.addCallback(check_connected)
+        return d
+
+    def test_close(self):
+        """
+        Test that the connection is closed, also for the first
+        connection when the zookeeper handle is 0.
+        """
+
+        def _fake_init(*_):
+            return 0
+
+        mock_init = self.mocker.replace("zookeeper.init")
+        mock_init(ARGS)
+        self.mocker.call(_fake_init)
+
+        def _fake_close(handle):
+            return zookeeper.OK
+
+        mock_close = self.mocker.replace("zookeeper.close")
+        mock_close(0)
+        self.mocker.call(_fake_close)
+
+        self.mocker.replay()
+
+        # Avoid unclean reactor by letting the callLater go through,
+        # but we do not care about the timeout.
+        def _silence_timeout(failure):
+            failure.trap(ConnectionTimeoutException)
+        self.client.connect(timeout=0).addErrback(_silence_timeout)
+
+        d = maybeDeferred(self.client.close)
+
+        def _verify(result):
+            self.mocker.verify()
+        d.addCallback(_verify)
         return d
 
     def test_client_event_repr(self):
@@ -404,7 +439,7 @@ class ClientTests(ZookeeperTestCase):
         """
         d = self.client.connect()
 
-        def inject_error(result_code, d, extra_codes=None):
+        def inject_error(result_code, d, extra_codes=None, path=None):
             error = SyntaxError()
             d.errback(error)
             return error
@@ -412,7 +447,8 @@ class ClientTests(ZookeeperTestCase):
         def check_exists(client):
             mock_client = self.mocker.patch(client)
             mock_client._check_result(
-                ANY, DEFERRED_MATCH, extra_codes=(zookeeper.NONODE,))
+                ANY, DEFERRED_MATCH, extra_codes=(zookeeper.NONODE,),
+                path="/zebra-moon")
             self.mocker.call(inject_error)
             self.mocker.replay()
             return client.exists("/zebra-moon")
@@ -604,7 +640,8 @@ class ClientTests(ZookeeperTestCase):
 
         def verify_succeeds(failure):
             self.assertTrue(failure)
-            self.assertEqual(failure.value.args, ("no node",))
+            self.assertEqual(
+                failure.value.args, ("no node /abcd",))
 
         d.addCallback(delete_node)
         d.addCallback(verify_fails)
@@ -647,7 +684,8 @@ class ClientTests(ZookeeperTestCase):
 
         def verify_succeeds(failure):
             self.assertTrue(failure)
-            self.assertEqual(failure.value.args, ("no node",))
+            self.assertTrue(
+                failure.value.args, ("no node /xy1"))
 
         d.addCallback(set_node)
         d.addCallback(verify_fails)
@@ -804,7 +842,7 @@ class ClientTests(ZookeeperTestCase):
         self.failUnlessFailure(d, zookeeper.NoNodeException)
         return d
 
-    def test_add_auth(self):
+    def xtest_add_auth(self):
         """
         The connection can have zero or more authentication infos. This
         authentication infos are used when accessing nodes to veriy access
@@ -837,7 +875,7 @@ class ClientTests(ZookeeperTestCase):
             return self.client.set("/orchard", "bar")
 
         def node_access_failed(failure):
-            self.assertEqual(failure.value.args, ("not authenticated",))
+            self.assertEqual(failure.value.args, ("not authenticated /orchard",))
             failed.append(True)
             return
 

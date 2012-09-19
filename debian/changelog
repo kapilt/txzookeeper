@@ -1,3 +1,9 @@
+txzookeeper (0.9.7-0ubuntu1) quantal; urgency=low
+
+  * Path included on exceptions, connection close bugfix
+
+ -- kapil <kapil@objectrealms.net>  Wed, 19 Sep 2012 08:54:08 -0400
+
 txzookeeper (0.9.6-0ubuntu3) quantal; urgency=low
 
   * managed client implementation with auto session expiration behavior

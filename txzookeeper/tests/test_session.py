@@ -59,6 +59,8 @@ class ClientSessionTests(ZookeeperTestCase):
 
     def tearDown(self):
         super(ClientSessionTests, self).tearDown()
+        if self.client:
+            self.client.close()
         self.cluster.reset()
 
     @inlineCallbacks
@@ -208,6 +210,7 @@ class ClientSessionTests(ZookeeperTestCase):
         # It can take some time for this to propagate
         yield events_received
         self.assertEqual(len(session_events), 8)
+
         # The last four (conn + 3 watches) are all expired
         for evt in session_events[4:]:
             self.assertEqual(evt.state_name, "expired")
@@ -223,7 +226,11 @@ class ClientSessionTests(ZookeeperTestCase):
         yield self.assertFailure(c_watch_d, zookeeper.SessionExpiredException)
 
         # If a reconnect attempt is made with a dead session id
-        #yield self.client.connect(client_id=self.client.client_id)
+        print "reconnect"
+        yield self.client.connect(client_id=self.client.client_id)
+        yield self.assertFailure(
+            self.client.get_children("/"),
+            NotConnectedException, ConnectionException)
 
     test_client_session_expiration_event.timeout = 10
 
