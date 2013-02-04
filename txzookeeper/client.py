@@ -36,6 +36,9 @@ ZOO_OPEN_ACL_UNSAFE = {
     "scheme": "world",
     "id": "anyone"}
 
+# Skip acls for policy objects @ a higher level
+SKIP_ACLS = object()
+
 # Map result codes to exceptions classes.
 ERROR_MAPPING = {
     zookeeper.APIERROR: zookeeper.ApiErrorException,
@@ -516,6 +519,9 @@ class ZookeeperClient(object):
         @params acls: A list of dictionaries specifying permissions.
         @params flags: Node creation flags (ephemeral, sequence, persistent)
         """
+        if acls == SKIP_ACLS:
+            acls = [ZOO_OPEN_ACL_UNSAFE]
+
         d = defer.Deferred()
         if self._check_connected(d):
             return d
