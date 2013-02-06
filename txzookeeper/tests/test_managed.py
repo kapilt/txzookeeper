@@ -20,6 +20,7 @@
 #  along with txzookeeper.  If not, see <http://www.gnu.org/licenses/>.
 #
 
+import logging
 import zookeeper
 
 from twisted.internet.defer import inlineCallbacks, Deferred, DeferredList
@@ -148,12 +149,12 @@ class SessionClientExpireTests(ZookeeperTestCase):
         super(SessionClientExpireTests, self).setUp()
         self.client = managed.ManagedClient("127.0.0.1:2181", 3000)
         self.client2 = None
+        self.output = self.capture_log(level=logging.DEBUG)
         return self.client.connect()
 
     @inlineCallbacks
     def tearDown(self):
         self.client.close()
-
         self.client2 = ZookeeperClient("127.0.0.1:2181")
         yield self.client2.connect()
         utils.deleteTree(handle=self.client2.handle)
@@ -171,10 +172,13 @@ class SessionClientExpireTests(ZookeeperTestCase):
 
     @inlineCallbacks
     def test_session_expiration_conn(self):
+        d = self.client.subscribe_new_session()
         session_id = self.client.client_id[0]
         yield self.client.create("/fo-1", "abc")
         yield self.expire_session()
-        yield self.client.exists("/")
+        yield d
+        stat = yield self.client.exists("/")
+        self.assertTrue(stat)
         self.assertNotEqual(session_id, self.client.client_id[0])
 
     @inlineCallbacks
@@ -187,14 +191,6 @@ class SessionClientExpireTests(ZookeeperTestCase):
         yield self.expire_session()
         yield d
         yield w_d
-        self.assertNotEqual(session_id, self.client.client_id[0])
-
-    @inlineCallbacks
-    def test_session_expiration_conn_watch(self):
-        session_id = self.client.client_id[0]
-        yield self.client.create("/fo-1", "abc")
-        yield self.expire_session()
-        yield self.client.exists("/")
         self.assertNotEqual(session_id, self.client.client_id[0])
 
     @inlineCallbacks

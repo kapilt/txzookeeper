@@ -74,8 +74,8 @@ class ZookeeperTestCase(TestCase, MockerTestCase):
             return None
         return original_value
 
-    def capture_log(
-        self, name="", level=logging.INFO, log_file=None, formatter=None):
+    def capture_log(self, name="", level=logging.INFO,
+                    log_file=None, formatter=None):
         """Capture log channel to StringIO"""
         if log_file is None:
             log_file = StringIO.StringIO()

@@ -77,10 +77,12 @@ class ManagedZooKeeper(object):
 
         with open(config_path, "w") as config:
             config.write("""
-tickTime=2000
+tickTime=1000
 dataDir=%s
 clientPort=%s
 maxClientCnxns=0
+maxSessionTimeout=5000
+minSessionTimeout=2000
 """ % (data_path, self.server_info.client_port))
 
         # setup a replicated setup if peers are specified
