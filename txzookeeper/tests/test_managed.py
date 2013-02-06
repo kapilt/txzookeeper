@@ -98,9 +98,12 @@ class WatchTest(ZookeeperTestCase):
         reset_done = self.watches.reset()
 
         e, _ = results.pop()
+        e = list(e)
+        e.append(0)
+
         self.assertEqual(
             str(ClientEvent(*e)),
-            "<ClientEvent session at '/foobar' state: connected>")
+            "<ClientEvent session at '/foobar' state: connected handle:0>")
         d.callback(True)
         yield reset_done
         self.assertNotIn(w, self.watches._watches)
@@ -121,9 +124,12 @@ class WatchTest(ZookeeperTestCase):
         reset_done = self.watches.reset()
 
         e, _ = results.pop()
+        e = list(e)
+        e.append(0)
+
         self.assertEqual(
             str(ClientEvent(*e)),
-            "<ClientEvent session at '/foobar' state: connected>")
+            "<ClientEvent session at '/foobar' state: connected handle:0>")
         d.callback(True)
         yield reset_done
         self.assertNotIn(w, self.watches._watches)
@@ -162,20 +168,23 @@ class SessionClientExpireTests(ZookeeperTestCase):
         super(SessionClientExpireTests, self).tearDown()
 
     @inlineCallbacks
-    def expire_session(self):
+    def expire_session(self, wait=True):
         assert self.client.connected
+        if wait:
+            d = self.client.subscribe_new_session()
         self.client2 = ZookeeperClient(self.client.servers)
         yield self.client2.connect(client_id=self.client.client_id)
         yield self.client2.close()
         # It takes some time to propagate (1/3 session time as ping)
-        yield self.sleep(2)
+        if wait:
+            yield d
 
     @inlineCallbacks
     def test_session_expiration_conn(self):
         d = self.client.subscribe_new_session()
         session_id = self.client.client_id[0]
         yield self.client.create("/fo-1", "abc")
-        yield self.expire_session()
+        yield self.expire_session(wait=False)
         yield d
         stat = yield self.client.exists("/")
         self.assertTrue(stat)
@@ -188,7 +197,7 @@ class SessionClientExpireTests(ZookeeperTestCase):
         yield c_d
         d = self.client.subscribe_new_session()
         self.assertFalse(d.called)
-        yield self.expire_session()
+        yield self.expire_session(wait=False)
         yield d
         yield w_d
         self.assertNotEqual(session_id, self.client.client_id[0])
@@ -237,11 +246,13 @@ class SessionClientExpireTests(ZookeeperTestCase):
             [g_w_d, c_w_d, e_w_d],
             fireOnOneErrback=True, consumeErrors=True)
 
+        h = self.client.handle
         self.assertEqual(
             [str(d.result) for d in (g_w_d, c_w_d, e_w_d)],
-            ["<ClientEvent session at '/fo-1' state: connected>",
-             "<ClientEvent session at '/' state: connected>",
-             "<ClientEvent session at '/fo-2' state: connected>"])
+            ["<ClientEvent session at '/fo-1' state: connected handle:%d>" % h,
+             "<ClientEvent session at '/' state: connected handle:%d>" % h,
+             "<ClientEvent session at '/fo-2' state: connected handle:%d>" % h
+             ])
 
     @inlineCallbacks
     def test_ephemeral_no_track_sequence_nodes(self):

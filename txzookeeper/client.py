@@ -470,7 +470,6 @@ class ZookeeperClient(object):
         def _check_timeout():
             # Close the handle
             try:
-                print "closing handle from timeout", self.handle
                 if self.handle is not None:
                     zookeeper.close(self.handle)
             except zookeeper.ZooKeeperException:

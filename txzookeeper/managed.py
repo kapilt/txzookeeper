@@ -186,7 +186,7 @@ class SessionClient(ZookeeperClient):
                 log.debug("No handle, client closed")
                 return
 
-            # Sanity check forced value 
+            # Sanity check forced value
             # If its a stale handle (ie. already closed), don't re-establish
 #            try:
 #                zookeeper.is_unrecoverable(self.handle)

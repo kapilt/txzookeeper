@@ -75,7 +75,7 @@ def get_delay(session_timeout, max_delay=5, session_fraction=RETRY_FRACTION):
     :param max_delay: The max delay for a retry, in seconds.
     :param session_fraction: The fractional amount of a timeout to wait
     """
-    retry_delay = session_timeout * (float(session_fraction) / 1000)
+    retry_delay = (session_timeout * (float(session_fraction) / 100)) / 1000
     return min(retry_delay, max_delay)
 
 

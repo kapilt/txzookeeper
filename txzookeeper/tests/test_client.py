@@ -844,7 +844,7 @@ class ClientTests(ZookeeperTestCase):
         self.failUnlessFailure(d, zookeeper.NoNodeException)
         return d
 
-    def xtest_add_auth(self):
+    def test_add_auth(self):
         """
         The connection can have zero or more authentication infos. This
         authentication infos are used when accessing nodes to veriy access
@@ -1167,18 +1167,14 @@ class ClientTests(ZookeeperTestCase):
 
     test_connect_with_error.timeout = 5
 
-    def xtest_connect_timeout(self):
+    def test_connect_timeout(self):
         """
         A timeout in seconds can be specified on connect, if the client hasn't
         connected before then, then an errback is invoked with a timeout
         exception.
         """
-        mock_init = self.mocker.replace("zookeeper.init")
-        mock_init(ANY, ANY, ANY)
-        self.mocker.result(0)
-        self.mocker.replay()
-
-        d = self.client.connect(timeout=0.1)
+        # Connect to a non standard port with nothing at the remote side.
+        d = self.client.connect("127.0.0.1:2182", timeout=0.2)
 
         def verify_timeout(failure):
             self.assertTrue(
