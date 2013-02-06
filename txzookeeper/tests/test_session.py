@@ -293,8 +293,7 @@ class ClientSessionTests(ZookeeperTestCase):
 
     @inlineCallbacks
     def test_managed_client_backoff(self):
-        import sys
-        output = self.capture_log(level=logging.DEBUG, log_file=sys.stderr)
+        output = self.capture_log(level=logging.DEBUG)
         self.patch(managed, 'BACKOFF_INCREMENT', 2)
         self.client = yield managed.ManagedClient(
             self.cluster[0].address,
@@ -317,11 +316,8 @@ class ClientSessionTests(ZookeeperTestCase):
 
         # Start the cluster and watch things work
         self.cluster[0].run()
-        print "started"
         yield d
-        print "watch complete"
         yield watch_d
-        #self.assertIn("Backing off reconnect", output.getvalue())
-        print "test complete"
+        self.assertIn("Backing off reconnect", output.getvalue())
 
     test_managed_client_backoff.timeout = 25

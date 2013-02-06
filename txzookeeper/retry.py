@@ -26,7 +26,6 @@ errors.
 """
 
 import time
-
 import zookeeper
 
 from twisted.internet.defer import inlineCallbacks, returnValue, Deferred
@@ -88,7 +87,7 @@ def check_retryable(retry_client, max_time, error):
     """
 
     t = time.time()
-    #print "check", error, max_time - t, max_time
+
     # Only if the error is known.
     if not is_retryable(error):
         return False
@@ -126,7 +125,6 @@ def retry(client, func, *args, **kw):
     retry_started = [time.time()]
     retry_error = False
     while 1:
-        print "retry entered", func
         try:
             value = yield func(*args, **kw)
         except Exception, e:
@@ -137,31 +135,19 @@ def retry(client, func, *args, **kw):
             # If we keep retrying past the 1.2 * session timeout without
             # success just die, the session expiry is fatal.
             max_time = (session_timeout / 1000.0) * 1.2 + retry_started[0]
-            #print "retry time", e, max_time, time.time(), session_timeout
+
             if not check_retryable(client, max_time, e):
-                #print "not retryable"
-                if retry_error:
-                    check_retryable(client, max_time, e)
                 if callable(client.cb_retry_error) and not retry_error:
                     retry_error = True
-                    #print "Handling Retry persistent error"
-                    try:
-                        yield client.cb_retry_error(e)
-                    except Exception, e:
-                        print "cb retry error", e
-                    finally:
-                        retry_started[0] = time.time()
+                    yield client.cb_retry_error(e)
+                    retry_started[0] = time.time()
                     continue
-                #print "retry reraise"
                 raise
 
             # Give the connection a chance to auto-heal.
-            print "retry delay", get_delay(session_timeout)
             yield sleep(get_delay(session_timeout))
             continue
 
-        print "retry op complete"
-        print
         returnValue(value)
 
 

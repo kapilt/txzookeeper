@@ -496,7 +496,6 @@ class ZookeeperClient(object):
         else:
             self.handle = zookeeper.init(
                 self._servers, callback, self._session_timeout)
-        print "created handle", self.handle
         return d
 
     def _cb_connected(
@@ -518,7 +517,6 @@ class ZookeeperClient(object):
         if connect_deferred.called:
             # If we timed out and then connected, then close the conn.
             if state == zookeeper.CONNECTED_STATE and scheduled_timeout.called:
-                print "closing post timeout connect", self.handle
                 self.close()
                 self.handle = -1
                 return

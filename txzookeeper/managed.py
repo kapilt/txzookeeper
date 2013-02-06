@@ -186,15 +186,6 @@ class SessionClient(ZookeeperClient):
                 log.debug("No handle, client closed")
                 return
 
-            # Sanity check forced value
-            # If its a stale handle (ie. already closed), don't re-establish
-#            try:
-#                zookeeper.is_unrecoverable(self.handle)
-#            except zookeeper.ZooKeeperException:
-#                if e:
-#                    raise e
-#                return
-
             # Its already connected, don't re-establish.
             if not forced and not self.unrecoverable:
                 log.debug("Client already connected, allowing retry")
@@ -207,7 +198,6 @@ class SessionClient(ZookeeperClient):
             yield self._cb_restablish_session().addErrback(
                 self._cb_restablish_errback, e)
 
-            print "restablish no error"
         except Exception, e:
             log.error("error while re-establish %r %s" % (e, e))
         finally:
@@ -232,7 +222,6 @@ class SessionClient(ZookeeperClient):
             if self.handle is None:
                 returnValue(self.handle)
             try:
-                print "conn"
                 yield self.connect(timeout=self._connect_timeout)
                 log.info(
                     "Restablished connection")
@@ -280,7 +269,6 @@ class SessionClient(ZookeeperClient):
     def _cb_restablish_errback(self, err, failure):
         """If there's an error re-establishing the session log it.
         """
-        print "error restablishing", err, failure
         log.error("Error while trying to re-establish connection %s\n%s" % (
             failure.value, failure.getTraceback()))
         return failure
@@ -291,15 +279,12 @@ class SessionClient(ZookeeperClient):
 
         Dispatches from api usage error.
         """
-        print "conn error", error
         if not isinstance(error, (zookeeper.SessionExpiredException,
-                                  zookeeper.ConnectionLossException,
                                   NotConnectedException,
                                   zookeeper.ClosingException)):
             raise error
         log.debug("Connection error detected, reconnecting...")
         yield self.cb_restablish_session()
-        print "raising retry"
         raise zookeeper.ConnectionLossException
 
     # Dispatch from retry exceed session maximum
@@ -309,7 +294,6 @@ class SessionClient(ZookeeperClient):
 
     # Dispatch from connection events
     def _cb_session_event(self, client, event):
-        print "session event", event
         if (event.type == zookeeper.SESSION_EVENT and
             event.connection_state == zookeeper.EXPIRED_SESSION_STATE):
             log.debug("Client session expired event, restablishing")
@@ -379,7 +363,6 @@ class SessionClient(ZookeeperClient):
 
     # Track ephemerals
     def _cb_created(self, d, data, acls, flags, result_code, path):
-        print "created"
         if self._check_result(result_code, d, path=path):
             return
 

@@ -170,14 +170,15 @@ class SessionClientExpireTests(ZookeeperTestCase):
     @inlineCallbacks
     def expire_session(self, wait=True):
         assert self.client.connected
-        if wait:
-            d = self.client.subscribe_new_session()
+        #if wait:
+        #    d = self.client.subscribe_new_session()
         self.client2 = ZookeeperClient(self.client.servers)
         yield self.client2.connect(client_id=self.client.client_id)
         yield self.client2.close()
         # It takes some time to propagate (1/3 session time as ping)
         if wait:
-            yield d
+            yield self.sleep(2)
+            #yield d
 
     @inlineCallbacks
     def test_session_expiration_conn(self):
