@@ -178,7 +178,6 @@ class ZookeeperClient(object):
         self._session_timeout = session_timeout
         self._session_event_callback = None
         self._connection_error_callback = None
-        self._unrecoverable = None
         self.connected = False
         self.handle = None
 
@@ -377,24 +376,11 @@ class ZookeeperClient(object):
         Boolean value representing whether the current connection can be
         recovered.
         """
-        if self._unrecoverable:
-            return self._unrecoverable
         try:
             return bool(zookeeper.is_unrecoverable(self.handle))
         except zookeeper.ZooKeeperException:
             # guard against invalid handles
             return True
-
-    def set_unrecoverable(self):
-        """Manually denote that the connection is unrecoverable.
-
-        For retry and managed clients, this facilitates them
-        signaling that the client hasn't been able to communicate in
-        longer then session timeout. The client won't receive the
-        proper session expiration till it reconnects with same session
-        id an ensemble member.
-        """
-        self._unrecoverable = True
 
     def add_auth(self, scheme, identity):
         """Adds an authentication identity to this connection.
@@ -429,7 +415,6 @@ class ZookeeperClient(object):
                       an exception be raised.
         """
         self.connected = False
-        self._unrecoverable = None
 
         if self.handle is None:
             return

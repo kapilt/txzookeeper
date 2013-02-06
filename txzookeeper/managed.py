@@ -202,7 +202,6 @@ class SessionClient(ZookeeperClient):
             log.error("error while re-establish %r %s" % (e, e))
         finally:
             log.debug("Reconnect lock released %s", self)
-            log.debug("")
             yield self._reconnect_lock.release()
 
     @inlineCallbacks
@@ -228,11 +227,10 @@ class SessionClient(ZookeeperClient):
                 self._last_reconnect = time.time()
             except ConnectionTimeoutException:
                 log.info("Timeout establishing connection, retrying...")
-                pass
             except zookeeper.ZooKeeperException, e:
                 log.exception("Error while connecting %r %s" % (e, e))
             except Exception, e:
-                log.info("Unknown error, %s", e)
+                log.info("Reconnect unknown error, aborting: %s", e)
                 raise
             else:
                 break
