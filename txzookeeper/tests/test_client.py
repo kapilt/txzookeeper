@@ -159,16 +159,18 @@ class ClientTests(ZookeeperTestCase):
 
     def test_client_event_repr(self):
         event = ClientEvent(zookeeper.SESSION_EVENT,
-                            zookeeper.EXPIRED_SESSION_STATE, '')
-        self.assertEqual(repr(event),
-                         "<ClientEvent session at '' state: expired>")
+                            zookeeper.EXPIRED_SESSION_STATE, '', 0)
+        self.assertEqual(
+            repr(event),
+            "<ClientEvent session at '' state: expired handle:0>")
 
     def test_client_event_attributes(self):
-        event = ClientEvent(4, 'state', 'path')
+        event = ClientEvent(4, 'state', 'path', 0)
         self.assertEqual(event.type, 4)
         self.assertEqual(event.connection_state, 'state')
         self.assertEqual(event.path, 'path')
-        self.assertEqual(event, (4, 'state', 'path'))
+        self.assertEqual(event.handle, 0)
+        self.assertEqual(event, (4, 'state', 'path', 0))
 
     def test_client_use_while_disconnected_returns_failure(self):
         return self.assertFailure(
@@ -842,7 +844,7 @@ class ClientTests(ZookeeperTestCase):
         self.failUnlessFailure(d, zookeeper.NoNodeException)
         return d
 
-    def xtest_add_auth(self):
+    def test_add_auth(self):
         """
         The connection can have zero or more authentication infos. This
         authentication infos are used when accessing nodes to veriy access
@@ -1171,12 +1173,8 @@ class ClientTests(ZookeeperTestCase):
         connected before then, then an errback is invoked with a timeout
         exception.
         """
-        mock_init = self.mocker.replace("zookeeper.init")
-        mock_init(ANY, ANY, ANY)
-        self.mocker.result(0)
-        self.mocker.replay()
-
-        d = self.client.connect(timeout=0.1)
+        # Connect to a non standard port with nothing at the remote side.
+        d = self.client.connect("127.0.0.1:2182", timeout=0.2)
 
         def verify_timeout(failure):
             self.assertTrue(

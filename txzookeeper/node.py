@@ -130,16 +130,9 @@ class ZNode(object):
         Returns a boolean based on the node's existence. Also returns a
         deferred that fires when the node is modified/created/added/deleted.
         """
-        node_changed = Deferred()
-
-        def on_node_event((event, state, path)):
-            return node_changed.callback(
-                NodeEvent(event, state, self))
-
         d, w = self._context.exists_and_watch(self.path)
-        w.addCallback(on_node_event)
         d.addCallback(self._on_exists_success)
-        return d, node_changed
+        return d, w
 
     def _on_get_node_error(self, failure):
         failure.trap(NoNodeException)
@@ -165,17 +158,10 @@ class ZNode(object):
         Retrieve the node's data and a deferred that fires when this data
         changes.
         """
-        node_changed = Deferred()
-
-        def on_node_change((event, status, path)):
-            node_changed.callback(
-                NodeEvent(event, status, self))
-
         d, w = self._context.get_and_watch(self.path)
-        w.addCallback(on_node_change)
         d.addCallback(self._on_get_node_success)
         d.addErrback(self._on_get_node_error)
-        return d, node_changed
+        return d, w
 
     def set_data(self, data):
         """Set the node's data."""
@@ -236,17 +222,9 @@ class ZNode(object):
         a deferred that fires if a child is added or deleted. Optionally
         a name prefix may be passed which the child node must abide.
         """
-        children_changed = Deferred()
-
-        def on_child_added_removed((event, status, path)):
-            # path is the container not the child.
-            children_changed.callback(
-                NodeEvent(event, status, self))
-
         d, w = self._context.get_children_and_watch(self.path)
-        w.addCallback(on_child_added_removed)
         d.addCallback(self._on_get_children_filter_results, prefix)
-        return d, children_changed
+        return d, w
 
     def __cmp__(self, other):
         return cmp(self.path, other.path)

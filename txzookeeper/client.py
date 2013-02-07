@@ -136,7 +136,8 @@ class ConnectionTimeoutException(zookeeper.ZooKeeperException):
     """
 
 
-class ClientEvent(namedtuple("ClientEvent", 'type, connection_state, path')):
+class ClientEvent(namedtuple("ClientEvent",
+                             'type, connection_state, path, handle')):
     """
     A client event is returned when a watch deferred fires. It denotes
     some event on the zookeeper client that the watch was requested on.
@@ -151,8 +152,8 @@ class ClientEvent(namedtuple("ClientEvent", 'type, connection_state, path')):
         return STATE_NAME_MAPPING[self.connection_state]
 
     def __repr__(self):
-        return  "<ClientEvent %s at %r state: %s>" % (
-            self.type_name, self.path, self.state_name)
+        return  "<ClientEvent %s at %r state: %s handle:%s>" % (
+            self.type_name, self.path, self.state_name, self.handle)
 
 
 class ZookeeperClient(object):
@@ -186,8 +187,8 @@ class ZookeeperClient(object):
         else:
             session_id = self.client_id[0]
 
-        return  "<txZookeeperClient session: %s handle: %r state: %s>" % (
-            session_id, self.handle, self.state)
+        return  "<%s session: %s handle: %r state: %s>" % (
+            self.__class__.__name__, session_id, self.handle, self.state)
 
     def _check_connected(self, d):
         if not self.connected:
@@ -296,7 +297,8 @@ class ZookeeperClient(object):
         if event_type == zookeeper.SESSION_EVENT:
             if self._session_event_callback:
                 self._session_event_callback(
-                    self, ClientEvent(event_type, conn_state, path))
+                    self, ClientEvent(
+                        event_type, conn_state, path, self.handle))
             # We do propagate to watch deferreds, in one case in
             # particular, namely if the session is expired, in which
             # case the watches are dead, and we send an appropriate
@@ -374,7 +376,11 @@ class ZookeeperClient(object):
         Boolean value representing whether the current connection can be
         recovered.
         """
-        return bool(zookeeper.is_unrecoverable(self.handle))
+        try:
+            return bool(zookeeper.is_unrecoverable(self.handle))
+        except zookeeper.ZooKeeperException:
+            # guard against invalid handles
+            return True
 
     def add_auth(self, scheme, identity):
         """Adds an authentication identity to this connection.
@@ -447,6 +453,12 @@ class ZookeeperClient(object):
 
         # Use a scheduled function to ensure a timeout.
         def _check_timeout():
+            # Close the handle
+            try:
+                if self.handle is not None:
+                    zookeeper.close(self.handle)
+            except zookeeper.ZooKeeperException:
+                pass
             d.errback(
                 ConnectionTimeoutException("could not connect before timeout"))
 
@@ -491,13 +503,14 @@ class ZookeeperClient(object):
             # If we timed out and then connected, then close the conn.
             if state == zookeeper.CONNECTED_STATE and scheduled_timeout.called:
                 self.close()
+                self.handle = -1
                 return
 
             # Send session events to the callback, in addition to any
             # duplicate session events that will be sent for extant watches.
             if self._session_event_callback:
                 self._session_event_callback(
-                    self, ClientEvent(type, state, path))
+                    self, ClientEvent(type, state, path, self.handle))
 
             return
         # Connected successfully, or If we're expired on an initial
@@ -586,7 +599,8 @@ class ZookeeperClient(object):
             if error:
                 d.errback(error)
             else:
-                d.callback(ClientEvent(event_type, conn_state, path))
+                d.callback(ClientEvent(
+                    event_type, conn_state, path, self.handle))
         return self._exists(path, watcher), d
 
     def get(self, path):
@@ -614,7 +628,8 @@ class ZookeeperClient(object):
             if error:
                 d.errback(error)
             else:
-                d.callback(ClientEvent(event_type, conn_state, path))
+                d.callback(ClientEvent(
+                    event_type, conn_state, path, self.handle))
         return self._get(path, watcher), d
 
     def get_children(self, path):
@@ -641,7 +656,8 @@ class ZookeeperClient(object):
             if error:
                 d.errback(error)
             else:
-                d.callback(ClientEvent(event_type, conn_state, path))
+                d.callback(ClientEvent(
+                    event_type, conn_state, path, self.handle))
         return self._get_children(path, watcher), d
 
     def get_acl(self, path):

@@ -148,10 +148,12 @@ class RetryCoreTests(ZookeeperTestCase):
             _Conn(connected=True, unrecoverable=True), max_time, error))
 
     def test_get_delay(self):
+        # Delay currently set to ~1/3 of session time.
+
         # Verify max value is respected
-        self.assertEqual(get_delay(600 * 1000, 10), 10)
+        self.assertEqual(get_delay(25000, 10), 7.5)
         # Verify normal calculation
-        self.assertEqual(get_delay(600, 10, 30), 0.02)
+        self.assertEqual(get_delay(15000, 10, 30), 4.5)
 
 
 class RetryClientTests(test_client.ClientTests):
@@ -177,6 +179,9 @@ class RetryClientTests(test_client.ClientTests):
 
     def test_wb_reconnect_after_timeout_and_close(self):
         """white box tests disabled for retryclient."""
+
+    def test_exists_with_error(self):
+        """White box tests disabled for retryclient."""
 
 
 class RetryClientConnectionLossTest(ZookeeperTestCase):
