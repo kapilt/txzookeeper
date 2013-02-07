@@ -11,7 +11,7 @@ from twisted.internet.defer import (
 from client import (
     ZookeeperClient, ClientEvent, NotConnectedException,
     ConnectionTimeoutException)
-from retry import RetryClient
+from retry import RetryClient, is_session_error
 from utils import sleep
 
 
@@ -277,9 +277,7 @@ class SessionClient(ZookeeperClient):
 
         Dispatches from api usage error.
         """
-        if not isinstance(error, (zookeeper.SessionExpiredException,
-                                  NotConnectedException,
-                                  zookeeper.ClosingException)):
+        if is_session_error(error):
             raise error
         log.debug("Connection error detected, reconnecting...")
         yield self.cb_restablish_session()

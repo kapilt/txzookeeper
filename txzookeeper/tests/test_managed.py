@@ -215,6 +215,14 @@ class SessionClientExpireTests(ZookeeperTestCase):
         yield self.sleep(0.2)
 
     @inlineCallbacks
+    def test_app_usage_error_bypass_retry(self):
+        """App errors shouldn't trigger a reconnect."""
+        output = self.capture_log(level=logging.DEBUG)
+        yield self.assertFailure(
+            self.client.get("/abc"), zookeeper.NoNodeException)
+        self.assertNotIn("Persistent retry error", output.getvalue())
+
+    @inlineCallbacks
     def test_ephemeral_and_watch_recreate(self):
         # Create some ephemeral nodes
         yield self.client.create("/fo-1", "abc", flags=zookeeper.EPHEMERAL)

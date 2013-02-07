@@ -30,6 +30,8 @@ import zookeeper
 
 from twisted.internet.defer import inlineCallbacks, returnValue, Deferred
 
+from txzookeeper.client import NotConnectedException
+
 __all__ = ["retry", "RetryClient"]
 
 
@@ -50,6 +52,14 @@ def is_retryable(e):
          zookeeper.ConnectionLossException,
          zookeeper.OperationTimeoutException,
          RetryException))
+
+
+def is_session_error(e):
+    return isinstance(
+        e,
+        (zookeeper.SessionExpiredException,
+         zookeeper.ClosingException,
+         NotConnectedException))
 
 
 def sleep(delay):
@@ -76,6 +86,12 @@ def get_delay(session_timeout, max_delay=5, session_fraction=RETRY_FRACTION):
     """
     retry_delay = (session_timeout * (float(session_fraction) / 100)) / 1000
     return min(retry_delay, max_delay)
+
+
+def check_error(e):
+    """Verify a zookeeper connection error, as opposed to an app error.
+    """
+    return is_retryable(e) or is_session_error(e)
 
 
 def check_retryable(retry_client, max_time, error):
@@ -137,7 +153,11 @@ def retry(client, func, *args, **kw):
             max_time = (session_timeout / 1000.0) * 1.2 + retry_started[0]
 
             if not check_retryable(client, max_time, e):
-                if callable(client.cb_retry_error) and not retry_error:
+                # Check if its a persistent client error, and if so use the cb
+                if (check_error(e)
+                        and time.time() > max_time
+                        and callable(client.cb_retry_error)
+                        and not retry_error):
                     retry_error = True
                     yield client.cb_retry_error(e)
                     retry_started[0] = time.time()
