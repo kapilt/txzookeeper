@@ -277,7 +277,7 @@ class SessionClient(ZookeeperClient):
 
         Dispatches from api usage error.
         """
-        if is_session_error(error):
+        if not is_session_error(error):
             raise error
         log.debug("Connection error detected, reconnecting...")
         yield self.cb_restablish_session()
