@@ -26,13 +26,17 @@ errors.
 """
 
 import time
+import logging
 import zookeeper
 
 from twisted.internet.defer import inlineCallbacks, returnValue, Deferred
 
 from txzookeeper.client import NotConnectedException
+from txzookeeper.utils import sleep
 
 __all__ = ["retry", "RetryClient"]
+
+log = logging.getLogger("txzk.retry")
 
 
 class RetryException(Exception):
@@ -58,17 +62,13 @@ def is_session_error(e):
     return isinstance(
         e,
         (zookeeper.SessionExpiredException,
+         zookeeper.ConnectionLossException,
          zookeeper.ClosingException,
          NotConnectedException))
 
 
-def sleep(delay):
-    """Non-blocking sleep.
-    """
-    from twisted.internet import reactor
-    d = Deferred()
-    reactor.callLater(delay, d.callback, None)
-    return d
+def _args(args):
+    return args and args[0] or "NA"
 
 
 def get_delay(session_timeout, max_delay=5, session_fraction=RETRY_FRACTION):
@@ -145,19 +145,21 @@ def retry(client, func, *args, **kw):
             value = yield func(*args, **kw)
         except Exception, e:
             # For clients which aren't connected (session timeout == None)
-            # we raise the errors to the callers
+            # we raise the errors to the callers.
             session_timeout = client.session_timeout or 0
 
-            # If we keep retrying past the 1.2 * session timeout without
-            # success just die, the session expiry is fatal.
+            # The longest we keep retrying is 1.2 * session timeout
             max_time = (session_timeout / 1000.0) * 1.2 + retry_started[0]
 
             if not check_retryable(client, max_time, e):
                 # Check if its a persistent client error, and if so use the cb
+                # if present to try and reconnect for client errors.
                 if (check_error(e)
                         and time.time() > max_time
                         and callable(client.cb_retry_error)
                         and not retry_error):
+                    log.debug("Retry error %r on %s @ %s",
+                              e, func.__name__, _args(args))
                     retry_error = True
                     yield client.cb_retry_error(e)
                     retry_started[0] = time.time()
@@ -166,6 +168,7 @@ def retry(client, func, *args, **kw):
 
             # Give the connection a chance to auto-heal.
             yield sleep(get_delay(session_timeout))
+            log.debug("Retry on %s @ %s", func.__name__, _args(args))
             continue
 
         returnValue(value)

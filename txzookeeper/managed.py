@@ -1,3 +1,4 @@
+
 from functools import partial
 
 import contextlib
@@ -28,6 +29,7 @@ WATCH_KIND_MAP = {
 
 
 log = logging.getLogger("txzk.managed")
+#log.setLevel(logging.INFO)
 
 
 class Watch(object):
@@ -148,8 +150,8 @@ class SessionClient(ZookeeperClient):
     `subscribe_new_session`
     """
 
-    def __init__(
-        self, servers=None, session_timeout=None, connect_timeout=4000):
+    def __init__(self, servers=None, session_timeout=None,
+                 connect_timeout=4000):
         """
         """
         super(SessionClient, self).__init__(servers, session_timeout)
@@ -175,7 +177,6 @@ class SessionClient(ZookeeperClient):
         This will reconnect to zk, re-establish ephemerals, and
         trigger watches.
         """
-
         yield self._reconnect_lock.acquire()
         log.debug(
             "Connection reconnect, lock acquired handle:%d", self.handle)
@@ -186,11 +187,15 @@ class SessionClient(ZookeeperClient):
                 log.debug("No handle, client closed")
                 return
 
-            # Its already connected, don't re-establish.
+            # Don't allow forced reconnect hurds within a session.
+            if forced and ((time.time() - self._last_reconnect)
+                           < self.session_timeout):
+                forced = False
+
             if not forced and not self.unrecoverable:
                 log.debug("Client already connected, allowing retry")
                 return
-            elif self.connected or self.handle:
+            elif self.connected or self.handle >= 0:
                 self.close()
                 self.handle = -1
 
@@ -210,7 +215,8 @@ class SessionClient(ZookeeperClient):
         """
         # Reconnect
         while 1:
-            log.debug("Reconnect loop")
+            log.debug("Reconnect loop - connect timeout %d",
+                      self._connect_timeout)
 
             # If we have some failures, back off
             if self._backoff_seconds:
@@ -222,11 +228,10 @@ class SessionClient(ZookeeperClient):
                 returnValue(self.handle)
             try:
                 yield self.connect(timeout=self._connect_timeout)
-                log.info(
-                    "Restablished connection")
+                log.info("Restablished connection")
                 self._last_reconnect = time.time()
             except ConnectionTimeoutException:
-                log.info("Timeout establishing connection, retrying...")
+                log.debug("Timeout establishing connection, retrying...")
             except zookeeper.ZooKeeperException, e:
                 log.exception("Error while connecting %r %s" % (e, e))
             except Exception, e:
@@ -268,7 +273,7 @@ class SessionClient(ZookeeperClient):
         """If there's an error re-establishing the session log it.
         """
         log.error("Error while trying to re-establish connection %s\n%s" % (
-            failure.value, failure.getTraceback()))
+            err, failure))
         return failure
 
     @inlineCallbacks
@@ -285,13 +290,13 @@ class SessionClient(ZookeeperClient):
 
     # Dispatch from retry exceed session maximum
     def cb_retry_expired(self, error):
-        log.info("Persistent retry error, reconnecting...")
+        log.debug("Persistent retry error, reconnecting...")
         return self.cb_restablish_session(forced=True)
 
     # Dispatch from connection events
     def _cb_session_event(self, client, event):
         if (event.type == zookeeper.SESSION_EVENT and
-            event.connection_state == zookeeper.EXPIRED_SESSION_STATE):
+                event.connection_state == zookeeper.EXPIRED_SESSION_STATE):
             log.debug("Client session expired event, restablishing")
             self.cb_restablish_session()
 

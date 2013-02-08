@@ -26,7 +26,8 @@ import os
 
 import zookeeper
 
-from twisted.internet.defer import inlineCallbacks, Deferred, returnValue
+from twisted.internet.defer import (
+    inlineCallbacks, Deferred, DeferredList, returnValue)
 
 from txzookeeper import ZookeeperClient
 from txzookeeper.client import NotConnectedException, ConnectionException
@@ -303,12 +304,18 @@ class ClientSessionTests(ZookeeperTestCase):
         exists_d, watch_d = self.client.exists_and_watch("/hello")
         yield exists_d
 
-        self.cluster[0].stop()
         yield self.client2.create("/hello", "world")
         yield self.client2.close()
 
+        self.cluster[0].stop()
+        yield self.sleep(1)
+
         # Try to do something with the connection while its down.
-        d = self.client.create('/abc', 'test')
+        ops = []
+        ops.append(self.client.create('/abc', 'test'))
+        ops.append(self.client.get("/hello"))
+        ops.append(self.client.get_children("/"))
+        ops.append(self.client.set("/hello", "sad"))
 
         # Sleep and let the session expire, and ensure we're down long enough
         # for backoff to trigger.
@@ -316,8 +323,14 @@ class ClientSessionTests(ZookeeperTestCase):
 
         # Start the cluster and watch things work
         self.cluster[0].run()
-        yield d
+        yield DeferredList(
+            ops, fireOnOneErrback=True, consumeErrors=True)
+
         yield watch_d
-        self.assertIn("Backing off reconnect", output.getvalue())
+
+        # Verify we backed off at least once
+        self.assertIn("Backing off reconect", output.getvalue())
+        # Verify we only reconnected once
+        self.assertTrue(output.getvalue().count("Restablished connection"), 1)
 
     test_managed_client_backoff.timeout = 25
