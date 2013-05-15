@@ -329,7 +329,7 @@ class ClientSessionTests(ZookeeperTestCase):
         yield watch_d
 
         # Verify we backed off at least once
-        self.assertIn("Backing off reconect", output.getvalue())
+        self.assertIn("Backing off reconnect", output.getvalue())
         # Verify we only reconnected once
         self.assertTrue(output.getvalue().count("Restablished connection"), 1)
 

@@ -188,8 +188,9 @@ class SessionClient(ZookeeperClient):
                 return
 
             # Don't allow forced reconnect hurds within a session.
-            if forced and ((time.time() - self._last_reconnect)
-                           < self.session_timeout):
+            if forced and (
+                    (time.time() - self._last_reconnect)
+                    < self.session_timeout / 1000.0):
                 forced = False
 
             if not forced and not self.unrecoverable:
@@ -284,8 +285,8 @@ class SessionClient(ZookeeperClient):
         """
         if not is_session_error(error):
             raise error
-        log.debug("Connection error detected, reconnecting...")
-        yield self.cb_restablish_session()
+        log.debug("Connection error detected, delaying retry...")
+        yield sleep(1)
         raise zookeeper.ConnectionLossException
 
     # Dispatch from retry exceed session maximum

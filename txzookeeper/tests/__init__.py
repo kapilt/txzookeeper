@@ -69,7 +69,6 @@ class ZookeeperTestCase(TestCase, MockerTestCase):
             else:
                 setattr(object, attr, original_value)
         setattr(object, attr, value)
-
         if original_value is self._missing_attr:
             return None
         return original_value
