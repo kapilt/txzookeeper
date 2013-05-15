@@ -1,2 +1,3 @@
 version=3
-https://launchpad.net/txzookeeper .+download/txzookeeper-([\d.]+)\.tar.gz
+http://pypi.python.org/packages/source/t/txzookeeper/ txzookeeper-([\d.]+)\.tar.gz
+
