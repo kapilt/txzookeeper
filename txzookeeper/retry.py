@@ -26,12 +26,25 @@ errors.
 """
 
 import time
-
+import logging
 import zookeeper
 
 from twisted.internet.defer import inlineCallbacks, returnValue, Deferred
 
+from txzookeeper.client import NotConnectedException
+from txzookeeper.utils import sleep
+
 __all__ = ["retry", "RetryClient"]
+
+log = logging.getLogger("txzk.retry")
+
+
+class RetryException(Exception):
+    """Explicit retry exception.
+    """
+
+# Session timeout percentage that we should wait till retrying.
+RETRY_FRACTION = 30
 
 
 def is_retryable(e):
@@ -41,19 +54,24 @@ def is_retryable(e):
         e,
         (zookeeper.ClosingException,
          zookeeper.ConnectionLossException,
-         zookeeper.OperationTimeoutException))
+         zookeeper.OperationTimeoutException,
+         RetryException))
 
 
-def sleep(delay):
-    """Non-blocking sleep.
-    """
-    from twisted.internet import reactor
-    d = Deferred()
-    reactor.callLater(delay, d.callback, None)
-    return d
+def is_session_error(e):
+    return isinstance(
+        e,
+        (zookeeper.SessionExpiredException,
+         zookeeper.ConnectionLossException,
+         zookeeper.ClosingException,
+         NotConnectedException))
 
 
-def get_delay(session_timeout, max_delay=5, session_fraction=30.0):
+def _args(args):
+    return args and args[0] or "NA"
+
+
+def get_delay(session_timeout, max_delay=5, session_fraction=RETRY_FRACTION):
     """Get retry delay between retrying an operation.
 
     Returns either the specified fraction of a session timeout or the
@@ -66,8 +84,14 @@ def get_delay(session_timeout, max_delay=5, session_fraction=30.0):
     :param max_delay: The max delay for a retry, in seconds.
     :param session_fraction: The fractional amount of a timeout to wait
     """
-    retry_delay = session_timeout / (float(session_fraction) * 1000)
+    retry_delay = (session_timeout * (float(session_fraction) / 100)) / 1000
     return min(retry_delay, max_delay)
+
+
+def check_error(e):
+    """Verify a zookeeper connection error, as opposed to an app error.
+    """
+    return is_retryable(e) or is_session_error(e)
 
 
 def check_retryable(retry_client, max_time, error):
@@ -77,12 +101,15 @@ def check_retryable(retry_client, max_time, error):
     :param max_time: The max time (epoch tick) that the op is retryable till.
     :param error: The client operation exception.
     """
+
+    t = time.time()
+
     # Only if the error is known.
     if not is_retryable(error):
         return False
 
     # Only if we've haven't exceeded the max allotted time.
-    if max_time <= time.time():
+    if max_time <= t:
         return False
 
     # Only if the client hasn't been explicitly closed.
@@ -111,22 +138,37 @@ def retry(client, func, *args, **kw):
            must return a single value (either a deferred or result
            value).
     """
+    retry_started = [time.time()]
+    retry_error = False
     while 1:
         try:
             value = yield func(*args, **kw)
         except Exception, e:
             # For clients which aren't connected (session timeout == None)
-            # we raise the errors to the callers
+            # we raise the errors to the callers.
             session_timeout = client.session_timeout or 0
 
-            # If we keep retrying past the 1.5 * session timeout without
-            # success just die, the session expiry is fatal.
-            max_time = session_timeout * 1.5 + time.time()
+            # The longest we keep retrying is 1.2 * session timeout
+            max_time = (session_timeout / 1000.0) * 1.2 + retry_started[0]
+
             if not check_retryable(client, max_time, e):
+                # Check if its a persistent client error, and if so use the cb
+                # if present to try and reconnect for client errors.
+                if (check_error(e)
+                        and time.time() > max_time
+                        and callable(client.cb_retry_error)
+                        and not retry_error):
+                    log.debug("Retry error %r on %s @ %s",
+                              e, func.__name__, _args(args))
+                    retry_error = True
+                    yield client.cb_retry_error(e)
+                    retry_started[0] = time.time()
+                    continue
                 raise
 
             # Give the connection a chance to auto-heal.
             yield sleep(get_delay(session_timeout))
+            log.debug("Retry on %s @ %s", func.__name__, _args(args))
             continue
 
         returnValue(value)
@@ -157,9 +199,9 @@ def retry_watch(client, func, *args, **kw):
     # we raise the usage errors to the callers
     session_timeout = client.session_timeout or 0
 
-    # If we keep retrying past the 1.5 * session timeout without
+    # If we keep retrying past the 1.2 * session timeout without
     # success just die, the session expiry is fatal.
-    max_time = session_timeout * 1.5 + time.time()
+    max_time = session_timeout * 1.2 + time.time()
     value_d, watch_d = func(*args, **kw)
 
     def retry_delay(f):
@@ -236,6 +278,10 @@ class RetryClient(object):
 
     def __init__(self, client):
         self.client = client
+        self.client.cb_retry_error = None
+
+    def set_retry_error_callback(self, callback):
+        self.client.cb_retry_error = callback
 
     def add_auth(self, *args, **kw):
         return retry(self.client, self.client.add_auth, *args, **kw)
@@ -298,8 +344,10 @@ class RetryClient(object):
     def close(self):
         return self.client.close()
 
+    @inlineCallbacks
     def connect(self, *args, **kw):
-        return self.client.connect(*args, **kw)
+        yield self.client.connect(*args, **kw)
+        returnValue(self)
 
     # passthrough properties
     state = _passproperty("state")

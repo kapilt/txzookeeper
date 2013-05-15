@@ -230,8 +230,8 @@ class NodeTest(TestCase):
         """
         node = ZNode("/zoo/elephant", self.client)
         exists, watch = yield node.exists_and_watch()
-
-        self.client.create("/zoo/elephant")
+        self.assertFalse((yield exists))
+        yield self.client.create("/zoo/elephant")
         event = yield watch
         self.assertEqual(event.type, zookeeper.CREATED_EVENT)
         self.assertEqual(event.path, node.path)

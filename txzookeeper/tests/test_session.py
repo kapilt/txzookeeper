@@ -21,17 +21,20 @@
 #
 
 import atexit
+import logging
 import os
 
 import zookeeper
 
-from twisted.internet.defer import inlineCallbacks, Deferred, returnValue
+from twisted.internet.defer import (
+    inlineCallbacks, Deferred, DeferredList, returnValue)
 
 from txzookeeper import ZookeeperClient
 from txzookeeper.client import NotConnectedException, ConnectionException
 
 from txzookeeper.tests.common import ZookeeperCluster
 from txzookeeper.tests import ZookeeperTestCase
+from txzookeeper import managed
 
 
 ZK_HOME = os.environ.get("ZOOKEEPER_PATH")
@@ -61,6 +64,8 @@ class ClientSessionTests(ZookeeperTestCase):
         super(ClientSessionTests, self).tearDown()
         if self.client:
             self.client.close()
+        if self.client2:
+            self.client2.close()
         self.cluster.reset()
 
     @inlineCallbacks
@@ -136,7 +141,7 @@ class ClientSessionTests(ZookeeperTestCase):
         """A callback can be specified for connection errors.
 
         We can specify a callback for connection errors, that
-        can perform recovery for a disconnected client, restablishing
+        can perform recovery for a disconnected client.
         """
         @inlineCallbacks
         def connection_error_handler(connection, error):
@@ -147,7 +152,7 @@ class ClientSessionTests(ZookeeperTestCase):
             connection.connected = False
 
             # On loss of the connection, reconnect the client w/ same session.
-
+            connection.close()
             yield connection.connect(
                 self.cluster[1].address, client_id=connection.client_id)
             returnValue(23)
@@ -226,8 +231,9 @@ class ClientSessionTests(ZookeeperTestCase):
         yield self.assertFailure(c_watch_d, zookeeper.SessionExpiredException)
 
         # If a reconnect attempt is made with a dead session id
-        print "reconnect"
-        yield self.client.connect(client_id=self.client.client_id)
+        client_id = self.client.client_id
+        self.client.close()  # Free the handle
+        yield self.client.connect(client_id=client_id)
         yield self.assertFailure(
             self.client.get_children("/"),
             NotConnectedException, ConnectionException)
@@ -252,7 +258,8 @@ class ClientSessionTests(ZookeeperTestCase):
             session_events.append(e)
 
         # Connect to a node in the cluster and establish a watch
-        self.client = ZookeeperClient(self.cluster[2].address)
+        self.client = ZookeeperClient(self.cluster[2].address,
+                                      session_timeout=5000)
         self.client.set_session_callback(session_event_callback)
         yield self.client.connect()
 
@@ -284,3 +291,46 @@ class ClientSessionTests(ZookeeperTestCase):
         # Ephemeral is destroyed when the session closed.
         exists = yield self.client.exists("/hello")
         self.assertFalse(exists)
+
+    @inlineCallbacks
+    def test_managed_client_backoff(self):
+        output = self.capture_log(level=logging.DEBUG)
+        self.patch(managed, 'BACKOFF_INCREMENT', 2)
+        self.client = yield managed.ManagedClient(
+            self.cluster[0].address,
+            connect_timeout=4).connect()
+        self.client2 = yield ZookeeperClient(self.cluster[1].address).connect()
+
+        exists_d, watch_d = self.client.exists_and_watch("/hello")
+        yield exists_d
+
+        yield self.client2.create("/hello", "world")
+        yield self.client2.close()
+
+        self.cluster[0].stop()
+        yield self.sleep(1)
+
+        # Try to do something with the connection while its down.
+        ops = []
+        ops.append(self.client.create('/abc', 'test'))
+        ops.append(self.client.get("/hello"))
+        ops.append(self.client.get_children("/"))
+        ops.append(self.client.set("/hello", "sad"))
+
+        # Sleep and let the session expire, and ensure we're down long enough
+        # for backoff to trigger.
+        yield self.sleep(10)
+
+        # Start the cluster and watch things work
+        self.cluster[0].run()
+        yield DeferredList(
+            ops, fireOnOneErrback=True, consumeErrors=True)
+
+        yield watch_d
+
+        # Verify we backed off at least once
+        self.assertIn("Backing off reconnect", output.getvalue())
+        # Verify we only reconnected once
+        self.assertTrue(output.getvalue().count("Restablished connection"), 1)
+
+    test_managed_client_backoff.timeout = 25

@@ -69,13 +69,12 @@ class ZookeeperTestCase(TestCase, MockerTestCase):
             else:
                 setattr(object, attr, original_value)
         setattr(object, attr, value)
-
         if original_value is self._missing_attr:
             return None
         return original_value
 
-    def capture_log(
-        self, name="", level=logging.INFO, log_file=None, formatter=None):
+    def capture_log(self, name="", level=logging.INFO,
+                    log_file=None, formatter=None):
         """Capture log channel to StringIO"""
         if log_file is None:
             log_file = StringIO.StringIO()

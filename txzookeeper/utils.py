@@ -22,7 +22,7 @@
 
 
 import zookeeper
-from twisted.internet.defer import inlineCallbacks
+from twisted.internet.defer import inlineCallbacks, Deferred
 
 
 @inlineCallbacks
@@ -69,3 +69,16 @@ def retry_change(client, path, change_function):
                 zookeeper.NoNodeException,
                 zookeeper.BadVersionException):
             pass
+
+
+def sleep(delay):
+    """Non-blocking sleep.
+
+    :param int delay: time in seconds to sleep.
+    :return: a Deferred that fires after the desired delay.
+    :rtype: :class:`twisted.internet.defer.Deferred`
+    """
+    from twisted.internet import reactor
+    deferred = Deferred()
+    reactor.callLater(delay, deferred.callback, None)
+    return deferred

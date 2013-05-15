@@ -20,6 +20,7 @@
 #  along with txzookeeper.  If not, see <http://www.gnu.org/licenses/>.
 #
 
+import logging
 import zookeeper
 
 from twisted.internet.defer import inlineCallbacks, Deferred, DeferredList
@@ -97,9 +98,12 @@ class WatchTest(ZookeeperTestCase):
         reset_done = self.watches.reset()
 
         e, _ = results.pop()
+        e = list(e)
+        e.append(0)
+
         self.assertEqual(
             str(ClientEvent(*e)),
-            "<ClientEvent session at '/foobar' state: connected>")
+            "<ClientEvent session at '/foobar' state: connected handle:0>")
         d.callback(True)
         yield reset_done
         self.assertNotIn(w, self.watches._watches)
@@ -120,9 +124,12 @@ class WatchTest(ZookeeperTestCase):
         reset_done = self.watches.reset()
 
         e, _ = results.pop()
+        e = list(e)
+        e.append(0)
+
         self.assertEqual(
             str(ClientEvent(*e)),
-            "<ClientEvent session at '/foobar' state: connected>")
+            "<ClientEvent session at '/foobar' state: connected handle:0>")
         d.callback(True)
         yield reset_done
         self.assertNotIn(w, self.watches._watches)
@@ -148,12 +155,12 @@ class SessionClientExpireTests(ZookeeperTestCase):
         super(SessionClientExpireTests, self).setUp()
         self.client = managed.ManagedClient("127.0.0.1:2181", 3000)
         self.client2 = None
+        self.output = self.capture_log(level=logging.DEBUG)
         return self.client.connect()
 
     @inlineCallbacks
     def tearDown(self):
         self.client.close()
-
         self.client2 = ZookeeperClient("127.0.0.1:2181")
         yield self.client2.connect()
         utils.deleteTree(handle=self.client2.handle)
@@ -161,20 +168,33 @@ class SessionClientExpireTests(ZookeeperTestCase):
         super(SessionClientExpireTests, self).tearDown()
 
     @inlineCallbacks
-    def expire_session(self):
+    def expire_session(self, wait=True, retry=0):
         assert self.client.connected
+        #if wait:
+        #    d = self.client.subscribe_new_session()
+        client_id = self.client.client_id
         self.client2 = ZookeeperClient(self.client.servers)
-        yield self.client2.connect(client_id=self.client.client_id)
+        yield self.client2.connect(client_id=client_id)
         yield self.client2.close()
+
         # It takes some time to propagate (1/3 session time as ping)
-        yield self.sleep(2)
+        if wait:
+            yield self.sleep(2)
+            client_new_id = self.client.client_id
+            # Crappy workaround to c libzk bug/issue see http://goo.gl/9ei5c
+            # Works most of the time.. but bound it when it doesn't. lame!
+            if client_id[0] == client_new_id[0] and retry < 10:
+                yield self.expire_session(wait, retry+1)
 
     @inlineCallbacks
     def test_session_expiration_conn(self):
+        d = self.client.subscribe_new_session()
         session_id = self.client.client_id[0]
         yield self.client.create("/fo-1", "abc")
-        yield self.expire_session()
-        yield self.client.exists("/")
+        yield self.expire_session(wait=True)
+        yield d
+        stat = yield self.client.exists("/")
+        self.assertTrue(stat)
         self.assertNotEqual(session_id, self.client.client_id[0])
 
     @inlineCallbacks
@@ -184,17 +204,9 @@ class SessionClientExpireTests(ZookeeperTestCase):
         yield c_d
         d = self.client.subscribe_new_session()
         self.assertFalse(d.called)
-        yield self.expire_session()
+        yield self.expire_session(wait=True)
         yield d
         yield w_d
-        self.assertNotEqual(session_id, self.client.client_id[0])
-
-    @inlineCallbacks
-    def test_session_expiration_conn_watch(self):
-        session_id = self.client.client_id[0]
-        yield self.client.create("/fo-1", "abc")
-        yield self.expire_session()
-        yield self.client.exists("/")
         self.assertNotEqual(session_id, self.client.client_id[0])
 
     @inlineCallbacks
@@ -207,6 +219,14 @@ class SessionClientExpireTests(ZookeeperTestCase):
         yield self.client.create("/foo2")
         # Nothing should blow up
         yield self.sleep(0.2)
+
+    @inlineCallbacks
+    def test_app_usage_error_bypass_retry(self):
+        """App errors shouldn't trigger a reconnect."""
+        output = self.capture_log(level=logging.DEBUG)
+        yield self.assertFailure(
+            self.client.get("/abc"), zookeeper.NoNodeException)
+        self.assertNotIn("Persistent retry error", output.getvalue())
 
     @inlineCallbacks
     def test_ephemeral_and_watch_recreate(self):
@@ -241,11 +261,13 @@ class SessionClientExpireTests(ZookeeperTestCase):
             [g_w_d, c_w_d, e_w_d],
             fireOnOneErrback=True, consumeErrors=True)
 
+        h = self.client.handle
         self.assertEqual(
             [str(d.result) for d in (g_w_d, c_w_d, e_w_d)],
-            ["<ClientEvent session at '/fo-1' state: connected>",
-             "<ClientEvent session at '/' state: connected>",
-             "<ClientEvent session at '/fo-2' state: connected>"])
+            ["<ClientEvent session at '/fo-1' state: connected handle:%d>" % h,
+             "<ClientEvent session at '/' state: connected handle:%d>" % h,
+             "<ClientEvent session at '/fo-2' state: connected handle:%d>" % h
+             ])
 
     @inlineCallbacks
     def test_ephemeral_no_track_sequence_nodes(self):
