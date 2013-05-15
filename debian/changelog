@@ -2,7 +2,7 @@ txzookeeper (0.9.8-0ubuntu1) raring; urgency=low
 
   * Better reconnect/retry behavior.
 
- -- kapil <kapil@objectrealms.net>  Mon, 6 May 2013 08:54:08 -0400
+ -- kapil <kapil@objectrealms.net>  Wed, 15 May 2013 09:29:43 -0400
 
 txzookeeper (0.9.7-0ubuntu1) quantal; urgency=low
 
