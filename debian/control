@@ -2,10 +2,10 @@ Source: txzookeeper
 Section: python
 Priority: optional
 XS-Python-Version: >= 2.5
-Maintainer: Ensemble Developers <ensemble@lists.ubuntu.com>
-Build-Depends: debhelper (>= 7), python-support (>= 0.6), python-central (>= 0.5), python, cdbs, python-setuptools
+Maintainer: Juju Developers <juju@lists.ubuntu.com>
+Build-Depends: debhelper (>= 7), python, python-setuptools
 Homepage: https://launchpad.net/txzookeeper
-Standards-Version: 3.8.4
+Standards-Version: 3.9.2
 
 Package: python-txzookeeper
 Architecture: all

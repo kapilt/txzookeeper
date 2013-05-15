@@ -1,6 +1,8 @@
 #!/usr/bin/make -f
 
-DEB_PYTHON_SYSTEM=pycentral
+REV=$(shell dpkg-parsechangelog | sed -rne 's,^Version: .*[+~]bzr([0-9]+).*,\1,p')
+VER=$(shell dpkg-parsechangelog | sed -rne 's,^Version: ([^-]+).*,\1,p')
 
 %:
-	dh $@
+	dh $@ --with python2
+
