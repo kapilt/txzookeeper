@@ -368,8 +368,7 @@ class SessionClient(ZookeeperClient):
         if self._check_result(result_code, d, path=path):
             return
 
-        if (flags & zookeeper.EPHEMERAL) and not (
-            flags & zookeeper.SEQUENCE):
+        if (flags & zookeeper.EPHEMERAL) and not (flags & zookeeper.SEQUENCE):
             self._ephemerals[path] = dict(
                 data=data, acls=acls, flags=flags)
 

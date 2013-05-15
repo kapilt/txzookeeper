@@ -168,24 +168,30 @@ class SessionClientExpireTests(ZookeeperTestCase):
         super(SessionClientExpireTests, self).tearDown()
 
     @inlineCallbacks
-    def expire_session(self, wait=True):
+    def expire_session(self, wait=True, retry=0):
         assert self.client.connected
         #if wait:
         #    d = self.client.subscribe_new_session()
+        client_id = self.client.client_id
         self.client2 = ZookeeperClient(self.client.servers)
-        yield self.client2.connect(client_id=self.client.client_id)
+        yield self.client2.connect(client_id=client_id)
         yield self.client2.close()
+
         # It takes some time to propagate (1/3 session time as ping)
         if wait:
             yield self.sleep(2)
-            #yield d
+            client_new_id = self.client.client_id
+            # Crappy workaround to c libzk bug/issue see http://goo.gl/9ei5c
+            # Works most of the time.. but bound it when it doesn't. lame!
+            if client_id[0] == client_new_id[0] and retry < 10:
+                yield self.expire_session(wait, retry+1)
 
     @inlineCallbacks
     def test_session_expiration_conn(self):
         d = self.client.subscribe_new_session()
         session_id = self.client.client_id[0]
         yield self.client.create("/fo-1", "abc")
-        yield self.expire_session(wait=False)
+        yield self.expire_session(wait=True)
         yield d
         stat = yield self.client.exists("/")
         self.assertTrue(stat)
@@ -198,7 +204,7 @@ class SessionClientExpireTests(ZookeeperTestCase):
         yield c_d
         d = self.client.subscribe_new_session()
         self.assertFalse(d.called)
-        yield self.expire_session(wait=False)
+        yield self.expire_session(wait=True)
         yield d
         yield w_d
         self.assertNotEqual(session_id, self.client.client_id[0])
